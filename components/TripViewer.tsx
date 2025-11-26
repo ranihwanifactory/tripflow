@@ -9,8 +9,8 @@ interface TripViewerProps {
   onClose: () => void;
 }
 
-// Reduced multiplier to 1.5 for much faster scrolling pace
-const SCROLL_HEIGHT_MULTIPLIER = 1.5;
+// Reduced multiplier to 1.2 for immediate snappy scrolling
+const SCROLL_HEIGHT_MULTIPLIER = 1.2;
 
 const getTransportIcon = (type: TransportType) => {
   switch (type) {
@@ -239,8 +239,8 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         // We simulate scrolling by translating the inner card.
         
         // Progress 0.0 -> Enter
-        // Progress 0.15 -> Fully Visible
-        // Progress 0.75 -> Start Exit
+        // Progress 0.1 -> Fully Visible
+        // Progress 0.85 -> Start Exit
         // Progress 1.0 -> Fully Exited (moved up)
         
         let localProgress = 0;
@@ -258,22 +258,22 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         let translateY = 0;
         let scale = 1;
 
-        if (localProgress < 0.15) {
-            // Entering (Fade In & Slide Up slightly) - Faster entry
-            opacity = localProgress / 0.15;
-            translateY = 50 * (1 - opacity); 
+        if (localProgress < 0.10) {
+            // Entering (Fade In & Slide Up slightly) - Extremely fast entry
+            opacity = localProgress / 0.10;
+            translateY = 30 * (1 - opacity); 
             scale = 0.95 + (0.05 * opacity);
-        } else if (localProgress < 0.75) {
-            // Holding (Visible & Steady) - Longer hold relative to shorter scroll
+        } else if (localProgress < 0.85) {
+            // Holding (Visible & Steady) - Hold for majority of the short scroll
             opacity = 1;
             translateY = 0;
             scale = 1;
         } else {
             // Exiting (Fade Out & Scroll Up)
             // This mimics the "immediately scroll" feeling the user asked for
-            const exitProgress = (localProgress - 0.75) / 0.25;
+            const exitProgress = (localProgress - 0.85) / 0.15;
             opacity = 1 - exitProgress;
-            translateY = -100 * exitProgress; // Move up significantly to feel like scrolling away
+            translateY = -80 * exitProgress; // Move up significantly to feel like scrolling away
             scale = 1 - (0.05 * exitProgress);
         }
 
@@ -306,7 +306,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       <div className="fixed inset-0 z-0">
         <div ref={mapRef} className="w-full h-full" />
         {/* Darker mask with blur for background effect as requested */}
-        <div className="absolute inset-0 bg-black/60 pointer-events-none backdrop-blur-[2px]" />
+        <div className="absolute inset-0 bg-black/80 pointer-events-none backdrop-blur-[3px]" />
       </div>
 
       {/* 2. Controls */}
