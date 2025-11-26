@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { TripData, TransportType, Review } from '../types';
+import { TripData, TransportType, Review, TripPoint } from '../types';
 import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send, Globe, Layers } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, addDoc, query, where, onSnapshot } from 'firebase/firestore';
@@ -37,6 +37,18 @@ const getTransportLabel = (type: TransportType) => {
     }
   };
 
+// Duplicated robust sort to ensure View is consistent even if DB data isn't perfectly sorted
+const robustSort = (a: TripPoint, b: TripPoint) => {
+    const timeA = new Date(a.date).getTime();
+    const timeB = new Date(b.date).getTime();
+    if (!isNaN(timeA) && !isNaN(timeB)) {
+        if (timeA !== timeB) return timeA - timeB;
+    }
+    const strComp = a.date.localeCompare(b.date);
+    if (strComp !== 0) return strComp;
+    return a.id.localeCompare(b.id);
+};
+
 const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -44,7 +56,6 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   
   const [map, setMap] = useState<any>(null);
   const [transportOverlay, setTransportOverlay] = useState<any>(null);
-  // Separate polylines: one for the full static path, one for the dynamic traveled path
   const [traveledPolyline, setTraveledPolyline] = useState<any>(null);
   
   const [mapType, setMapType] = useState<'ROADMAP' | 'HYBRID'>('HYBRID');
@@ -58,8 +69,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   // 0. Sort points chronologically to ensure correct path order regardless of saved order
   const sortedPoints = useMemo(() => {
     if (!trip || !trip.points) return [];
-    // Sort by Date timestamp
-    return [...trip.points].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return [...trip.points].sort(robustSort);
   }, [trip]);
 
   // Memoize path points based on SORTED points
@@ -74,7 +84,6 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   // Fetch Reviews
   useEffect(() => {
     if(!trip.id) return;
-    // Removed orderBy from query to avoid "Missing Index" error in Firestore
     const q = query(
         collection(db, 'reviews'), 
         where('tripId', '==', trip.id)
@@ -82,7 +91,6 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const fetchedReviews: Review[] = [];
         snapshot.forEach(doc => fetchedReviews.push({ id: doc.id, ...doc.data() } as Review));
-        // Sort client-side
         fetchedReviews.sort((a, b) => b.createdAt - a.createdAt);
         setReviews(fetchedReviews);
     });
@@ -138,7 +146,9 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   useEffect(() => {
     if (!mapRef.current || pathPoints.length === 0) return;
 
-    // Use Level 9 for "Vehicle moving" feel (Zoomed out)
+    // Clear previous map if exists to avoid duplication
+    mapRef.current.innerHTML = '';
+
     const options = {
       center: pathPoints[0].latlng,
       level: 9, 
@@ -151,14 +161,12 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     const newMap = new window.kakao.maps.Map(mapRef.current, options);
     setMap(newMap);
 
-    // Resize Observer for robustness
     const resizeObserver = new ResizeObserver(() => {
         newMap.relayout();
         newMap.setCenter(newMap.getCenter());
     });
     resizeObserver.observe(mapRef.current);
 
-    // Fix map rendering issues by forcing layout update
     setTimeout(() => {
         newMap.relayout();
         newMap.setCenter(pathPoints[0].latlng);
@@ -166,39 +174,45 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
     const path = pathPoints.map(p => p.latlng);
     
-    // Background Line (Total Path) - Faint Color
+    // Background Line
     const backgroundPolyline = new window.kakao.maps.Polyline({
       path: path,
       strokeWeight: 6,
-      strokeColor: '#FFFFFF', // White/Grey for the full path
-      strokeOpacity: 0.3,     // Very transparent
+      strokeColor: '#FFFFFF',
+      strokeOpacity: 0.3,
       strokeStyle: 'solid'
     });
     backgroundPolyline.setMap(newMap);
 
-    // Active Line (Traveled Path) - Red Color, initially empty
+    // Active Line (Red)
     const activePolyline = new window.kakao.maps.Polyline({
         path: [],
         strokeWeight: 6,
-        strokeColor: '#EF4444', // Red color for traveled path
+        strokeColor: '#EF4444',
         strokeOpacity: 1,
         strokeStyle: 'solid'
     });
     activePolyline.setMap(newMap);
     setTraveledPolyline(activePolyline);
 
-    // Add Checkpoint Markers
+    // Add Checkpoint Markers with NUMBER
     pathPoints.forEach((p, index) => {
       const markerContent = document.createElement('div');
       markerContent.innerHTML = `
         <div style="
-          width: 10px; 
-          height: 10px; 
-          background: white; 
+          width: 24px; 
+          height: 24px; 
+          background: #4F46E5; 
+          color: white;
+          font-weight: bold;
+          font-size: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
           border-radius: 50%; 
           box-shadow: 0 0 8px rgba(255,255,255,0.8);
-          border: 2px solid #4F46E5;
-        "></div>
+          border: 2px solid white;
+        ">${index + 1}</div>
       `;
       const customOverlay = new window.kakao.maps.CustomOverlay({
         position: p.latlng,
@@ -209,11 +223,10 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       customOverlay.setMap(newMap);
     });
 
-    // Transport/Vehicle Marker
+    // Transport Icon
     const transportContent = document.createElement('div');
     transportContent.className = 'transport-icon text-3xl filter drop-shadow-2xl transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2';
     transportContent.style.textShadow = '0 4px 8px rgba(0,0,0,0.5)';
-    // Ensure we use the FIRST point's transport method to Next point
     transportContent.innerText = getTransportIcon(sortedPoints[0].transportToNext);
 
     const overlay = new window.kakao.maps.CustomOverlay({
@@ -228,9 +241,9 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         resizeObserver.disconnect();
     };
 
-  }, [pathPoints, sortedPoints, trip]); // Added sortedPoints
+  }, [pathPoints, sortedPoints, trip, mapType]);
 
-  // 2. Handle Scroll Logic (Sticky & Animation & Dynamic Polyline)
+  // 2. Handle Scroll Logic
   useEffect(() => {
     const handleScroll = () => {
       if (!scrollContainerRef.current || !map || !transportOverlay || !traveledPolyline || pathPoints.length < 2) return;
@@ -253,7 +266,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       if (mapProgress < 0) mapProgress = 0;
       if (mapProgress > totalIndex - 1) mapProgress = totalIndex - 1;
 
-      // Move Marker & Update Polyline
+      // Move Marker
       const currentIndex = Math.floor(mapProgress);
       const currentSegmentProgress = mapProgress - currentIndex;
 
@@ -265,13 +278,9 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         const currentLng = start.getLng() + (end.getLng() - start.getLng()) * currentSegmentProgress;
         const currentPos = new window.kakao.maps.LatLng(currentLat, currentLng);
 
-        // Update Marker Position
         transportOverlay.setPosition(currentPos);
         map.panTo(currentPos);
         
-        // Update Transport Icon based on SORTED points
-        // We want to show the transport mode we are CURRENTLY using.
-        // If we are at index i, moving to i+1, we use sortedPoints[i].transportToNext
         const iconDiv = transportOverlay.getContent();
         if(iconDiv && currentIndex < sortedPoints.length) {
           const transportMode = sortedPoints[currentIndex].transportToNext;
@@ -281,18 +290,16 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
           }
         }
 
-        // Draw Red Polyline (Traveled path)
         const traveledPath = pathPoints.slice(0, currentIndex + 1).map(p => p.latlng);
-        traveledPath.push(currentPos); // Add current interpolated position
+        traveledPath.push(currentPos); 
         traveledPolyline.setPath(traveledPath);
 
       } else {
-        // At the very end
         const fullPath = pathPoints.map(p => p.latlng);
         traveledPolyline.setPath(fullPath);
       }
 
-      // Card Animation using sortedPoints
+      // Card Animation
       sortedPoints.forEach((_, idx) => {
         const card = cardRefs.current[idx];
         if (!card) return;
@@ -342,7 +349,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         container.removeEventListener('scroll', handleScroll);
       }
     };
-  }, [map, transportOverlay, traveledPolyline, pathPoints, sortedPoints]); // Depend on sortedPoints
+  }, [map, transportOverlay, traveledPolyline, pathPoints, sortedPoints]);
 
 
   return (
@@ -417,10 +424,8 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                 <div className="sticky top-0 h-screen w-full flex items-center justify-center p-4 overflow-hidden">
                     <div 
                         ref={el => cardRefs.current[idx] = el}
-                        // Reduced max-width (max-w-md) and overall sizes
                         className="w-full max-w-md bg-black/85 backdrop-blur-xl rounded-2xl shadow-2xl overflow-hidden border border-white/10 transform will-change-transform opacity-0"
                     >
-                        {/* Reduced image height */}
                         <div className="relative h-48 md:h-56 overflow-hidden group">
                             <img 
                                 src={point.photoUrl} 
@@ -430,14 +435,14 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                             <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
                             
                             <div className="absolute top-3 left-3">
-                                <span className="bg-black/50 backdrop-blur-md text-white px-2 py-0.5 rounded-full text-[10px] font-bold border border-white/10 shadow-lg">
-                                    #{idx + 1}
+                                <span className="bg-indigo-600 text-white px-2 py-0.5 rounded-full text-xs font-bold border border-white/20 shadow-lg">
+                                    STEP {idx + 1}
                                 </span>
                             </div>
 
                             <div className="absolute bottom-0 left-0 p-5 text-white w-full">
-                                <div className="flex items-center text-[10px] font-medium tracking-wider uppercase mb-1 text-indigo-300">
-                                    <Clock size={10} className="mr-1" />
+                                <div className="flex items-center text-xs font-bold tracking-wider uppercase mb-1 text-indigo-300">
+                                    <Clock size={12} className="mr-1" />
                                     {point.date.replace('T', ' ')}
                                 </div>
                                 <h2 className="text-xl md:text-2xl font-bold leading-tight text-white drop-shadow-md truncate">{point.title}</h2>
@@ -466,7 +471,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                 <div className="border-t border-white/10 pt-3 flex items-center justify-between">
                                     <div className="flex items-center text-gray-500 text-xs font-medium">
                                         <Navigation size={12} className="mr-1" />
-                                        <span>Next</span>
+                                        <span>Next Destination</span>
                                     </div>
                                     <div className="flex items-center bg-indigo-900/30 text-indigo-300 px-2 py-1 rounded-full text-xs font-bold border border-indigo-500/30">
                                         <span className="mr-1">{getTransportIcon(point.transportToNext)}</span>

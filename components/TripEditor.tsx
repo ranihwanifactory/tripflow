@@ -11,6 +11,24 @@ interface TripEditorProps {
   initialData?: TripData | null;
 }
 
+// Robust sort helper
+const robustSort = (a: TripPoint, b: TripPoint) => {
+    const timeA = new Date(a.date).getTime();
+    const timeB = new Date(b.date).getTime();
+    
+    // 1. Timestamp compare
+    if (!isNaN(timeA) && !isNaN(timeB)) {
+        if (timeA !== timeB) return timeA - timeB;
+    }
+    
+    // 2. String compare (ISO format YYYY-MM-DDTHH:mm is lexicographically sortable)
+    const strComp = a.date.localeCompare(b.date);
+    if (strComp !== 0) return strComp;
+    
+    // 3. Fallback to ID (stable sort for identical times)
+    return a.id.localeCompare(b.id);
+};
+
 const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<any>(null);
@@ -44,8 +62,8 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
   useEffect(() => {
     if (initialData) {
       setTripTitle(initialData.title);
-      // Sort points by date to ensure chronological order
-      const sortedPoints = [...initialData.points].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      // Sort points strictly by date
+      const sortedPoints = [...initialData.points].sort(robustSort);
       setPoints(sortedPoints);
     }
   }, [initialData]);
@@ -110,8 +128,8 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
 
   const updatePolyline = (targetMap: any, tripPoints: TripPoint[]) => {
       if (tripPoints.length < 2) return;
-      // Sort before drawing line to match list order
-      const sorted = [...tripPoints].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      // Sort before drawing
+      const sorted = [...tripPoints].sort(robustSort);
       const linePath = sorted.map(p => new window.kakao.maps.LatLng(p.lat, p.lng));
       
       const polyline = new window.kakao.maps.Polyline({
@@ -121,10 +139,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
         strokeOpacity: 0.8,
         strokeStyle: 'solid'
       });
-      // Clear previous polylines if we had a way to track them, but for now we just draw new ones
-      // In a real app we would clear the previous one. 
-      // Simplified: Since we re-render map often or this component is short lived.
-      // Ideally: useRef for polyline and setMap(null) before creating new one.
+      // Note: In a production app, we should clear previous polylines properly
       polyline.setMap(targetMap);
   };
 
@@ -142,7 +157,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     setDescription('');
     setLocationName('');
     setAddress('');
-    setDate(''); // Reset date
+    setDate(''); 
     setPhotoUrl('');
     setPhotoFile(null);
     setPreviewUrl('');
@@ -233,8 +248,8 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
         updatedPoints = [...points, newPoint];
       }
 
-      // CRITICAL: Sort chronologically by date
-      updatedPoints.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      // CRITICAL: Robust Sort chronologically by date
+      updatedPoints.sort(robustSort);
       
       // Reassign order
       updatedPoints = updatedPoints.map((p, idx) => ({ ...p, order: idx }));
@@ -256,10 +271,13 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     
     setIsSaving(true);
     try {
+      // FORCE FINAL SORT before saving to DB
+      const finalPoints = [...points].sort(robustSort).map((p, idx) => ({ ...p, order: idx }));
+
       const tripData = {
         userId: auth.currentUser?.uid || 'anonymous',
         title: tripTitle,
-        points: points, // Points are already sorted and ordered
+        points: finalPoints,
         createdAt: initialData ? initialData.createdAt : Date.now(),
       };
 
@@ -311,7 +329,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
              <div className="px-5 py-3 flex justify-between items-center bg-gray-100/50">
                 <h4 className="font-bold text-gray-600 text-sm flex items-center">
                     <MapPin size={14} className="mr-1"/> 등록된 경로 ({points.length})
-                    <span className="text-[10px] text-gray-400 font-normal ml-2">(시간순 자동정렬)</span>
+                    <span className="text-[10px] text-gray-400 font-normal ml-2">(시간순 자동정렬됨)</span>
                 </h4>
                 <span className="text-xs text-indigo-500 font-medium bg-indigo-50 px-2 py-0.5 rounded">수정하려면 클릭</span>
              </div>
@@ -331,15 +349,16 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                     >
                         <div className="w-12 h-12 bg-gray-100 rounded-md overflow-hidden flex-shrink-0 relative">
                             <img src={p.photoUrl} alt="" className="w-full h-full object-cover" />
+                             <div className="absolute top-0 left-0 bg-black/50 text-white text-[10px] px-1 rounded-br">#{idx + 1}</div>
                         </div>
                         <div className="flex-1 min-w-0">
                             <div className="flex justify-between items-start">
                                 <div>
                                     <h5 className="font-bold text-sm text-gray-800 truncate">
-                                        <span className="text-indigo-600 mr-1">#{idx + 1}</span>
                                         {p.title}
                                     </h5>
-                                    <p className="text-[10px] text-gray-500 font-medium">
+                                    <p className="text-[10px] text-blue-600 font-bold mt-0.5 flex items-center">
+                                        <ClockIcon size={10} className="mr-1"/>
                                         {new Date(p.date).toLocaleString([], {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'})}
                                     </p>
                                 </div>
@@ -347,7 +366,11 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         if(window.confirm('삭제하시겠습니까?')) {
-                                            setPoints(points.filter(pt => pt.id !== p.id));
+                                            const filtered = points.filter(pt => pt.id !== p.id);
+                                            // Sort after delete just in case
+                                            filtered.sort(robustSort);
+                                            const reordered = filtered.map((pt, i) => ({...pt, order: i}));
+                                            setPoints(reordered);
                                             if(editingPointId === p.id) clearForm();
                                         }
                                     }}
@@ -357,11 +380,6 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                                 </button>
                             </div>
                             <p className="text-xs text-gray-500 truncate mt-0.5">{p.locationName}</p>
-                            <div className="flex items-center mt-1">
-                                <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border">
-                                    {p.transportToNext === 'CAR' ? '🚗' : p.transportToNext === 'WALK' ? '🚶' : p.transportToNext === 'PLANE' ? '✈️' : '🚀'} 이동
-                                </span>
-                            </div>
                         </div>
                     </div>
                 ))}
@@ -397,12 +415,13 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                         />
                     </div>
                     <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1">방문 날짜 (시간순 정렬 기준)</label>
+                        <label className="block text-xs font-medium text-blue-600 font-bold mb-1">방문 날짜 (필수: 시간순 정렬 기준)</label>
                         <input 
                             type="datetime-local" 
-                            className="w-full p-2.5 border rounded-lg text-sm outline-none"
+                            className="w-full p-2.5 border border-blue-200 rounded-lg text-sm outline-none bg-blue-50 focus:bg-white transition"
                             value={date}
                             onChange={(e) => setDate(e.target.value)}
+                            required
                         />
                     </div>
                     
@@ -531,5 +550,10 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     </div>
   );
 };
+
+// Helper Icon
+const ClockIcon = ({size, className}: {size:number, className?:string}) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+);
 
 export default TripEditor;
