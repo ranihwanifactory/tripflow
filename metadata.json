@@ -1,0 +1,7 @@
+{
+  "name": "TripFlow - Dynamic Travel Map",
+  "description": "A storytelling travel map where scrolling animates your journey along the path.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
