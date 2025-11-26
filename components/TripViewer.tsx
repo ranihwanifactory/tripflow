@@ -9,10 +9,8 @@ interface TripViewerProps {
   onClose: () => void;
 }
 
-// Increased multiplier for slower, more comfortable scrolling (5 screens per point)
-const SCROLL_HEIGHT_MULTIPLIER = 5;
-// The portion of the scroll segment where the map stays stationary at the checkpoint (Sync Logic)
-const HOLD_THRESHOLD = 0.15; 
+// Reduced multiplier to 3 for a balanced pace (not too fast, not too slow)
+const SCROLL_HEIGHT_MULTIPLIER = 3.0;
 
 const getTransportIcon = (type: TransportType) => {
   switch (type) {
@@ -41,6 +39,7 @@ const getTransportLabel = (type: TransportType) => {
 const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [map, setMap] = useState<any>(null);
   const [transportOverlay, setTransportOverlay] = useState<any>(null);
 
@@ -165,7 +164,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
   }, [pathPoints, trip]);
 
-  // 2. Handle Scroll Logic (Sync Map & Content)
+  // 2. Handle Scroll Logic (Sticky & Animation)
   useEffect(() => {
     const handleScroll = () => {
       if (!scrollContainerRef.current || !map || !transportOverlay || pathPoints.length < 2) return;
@@ -175,52 +174,39 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       const vh = window.innerHeight;
 
       // Calculate progress relative to the content sections
+      // Hero section is 100vh
+      const scrollStart = vh;
       const sectionHeight = vh * SCROLL_HEIGHT_MULTIPLIER;
-      // Start calculation after the Hero section (which is 100vh)
-      const rawProgress = (scrollTop - vh) / sectionHeight;
-      const maxIndex = pathPoints.length - 1;
       
-      // -- SYNC LOGIC --
-      // Calculate 'Visual Map Progress' distinct from 'Scroll Progress'
-      // We want to HOLD the map at the checkpoint when the card is fully visible.
-      let mapProgress = 0;
+      // Calculate active section
+      const relativeScroll = Math.max(0, scrollTop - scrollStart);
+      const totalIndex = pathPoints.length;
       
-      if (rawProgress <= 0) {
-        mapProgress = 0;
-      } else if (rawProgress >= maxIndex) {
-        mapProgress = maxIndex;
-      } else {
-        const index = Math.floor(rawProgress);
-        const segmentProgress = rawProgress - index;
-        
-        // 1. Hold Phase (Card Visible): 0.0 ~ HOLD_THRESHOLD
-        // During this phase, the user is scrolling through the content card.
-        if (segmentProgress < HOLD_THRESHOLD) {
-            mapProgress = index;
-        } 
-        // 2. Hold Phase at End (Next Card Visible): (1-HOLD_THRESHOLD) ~ 1.0
-        // Arriving at next card
-        else if (segmentProgress > 1 - HOLD_THRESHOLD) {
-            mapProgress = index + 1;
-        } 
-        // 3. Travel Phase: HOLD_THRESHOLD ~ (1-HOLD_THRESHOLD)
-        // Traveling between points
-        else {
-            const moveRange = 1 - 2 * HOLD_THRESHOLD;
-            const normalizedMove = (segmentProgress - HOLD_THRESHOLD) / moveRange;
-            mapProgress = index + normalizedMove;
-        }
-      }
+      // Calculate continuous map progress
+      // We want the map to travel smoothly across the entire journey
+      // Total travel distance in pixels = sectionHeight * (totalIndex - 1)
+      // But we also want the map to move WHILE the user is reading/scrolling a card
+      
+      const currentSectionIndex = Math.floor(relativeScroll / sectionHeight);
+      const sectionProgress = (relativeScroll % sectionHeight) / sectionHeight;
+      
+      // Map Movement Logic
+      // We map the scroll to the points index.
+      // To make it smoother, we map the entire scrollable area to the path length.
+      
+      // Effective scrollable height for map travel
+      // We start moving immediately from the first card
+      let mapProgress = relativeScroll / sectionHeight;
+      
+      // Clamp map progress
+      if (mapProgress < 0) mapProgress = 0;
+      if (mapProgress > totalIndex - 1) mapProgress = totalIndex - 1;
 
-      // 1. Move Marker Logic based on mapProgress
+      // Move Marker
       const currentIndex = Math.floor(mapProgress);
       const currentSegmentProgress = mapProgress - currentIndex;
 
-      if (currentIndex >= maxIndex) {
-         const lastPos = pathPoints[maxIndex].latlng;
-         transportOverlay.setPosition(lastPos);
-         map.panTo(lastPos);
-      } else {
+      if (currentIndex < pathPoints.length - 1) {
         const start = pathPoints[currentIndex].latlng;
         const end = pathPoints[currentIndex + 1].latlng;
         
@@ -240,15 +226,70 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         }
       }
 
-      // 2. Animation Logic Removed
-      // We no longer fade out cards. They scroll naturally.
+      // Card Animation Logic (Direct DOM Manipulation for Performance)
+      trip.points.forEach((_, idx) => {
+        const card = cardRefs.current[idx];
+        if (!card) return;
+
+        // Calculate visibility for each card based on its specific section
+        // A section is [idx * sectionHeight, (idx + 1) * sectionHeight] relative to scrollStart
+        
+        // Let's define the "Active Window" for a card relative to the viewport
+        // Since we are using Sticky, the card container is fixed at top.
+        // We simulate scrolling by translating the inner card.
+        
+        // Progress 0.0 -> Enter
+        // Progress 0.2 -> Fully Visible
+        // Progress 0.6 -> Start Exit
+        // Progress 1.0 -> Fully Exited (moved up)
+        
+        let localProgress = 0;
+        
+        // If we are in the section for this card
+        if (currentSectionIndex === idx) {
+             localProgress = sectionProgress;
+        } else if (currentSectionIndex > idx) {
+             localProgress = 1; // Past
+        } else {
+             localProgress = 0; // Future
+        }
+
+        let opacity = 0;
+        let translateY = 0;
+        let scale = 1;
+
+        if (localProgress < 0.2) {
+            // Entering (Fade In & Slide Up slightly)
+            opacity = localProgress / 0.2;
+            translateY = 50 * (1 - opacity); 
+            scale = 0.95 + (0.05 * opacity);
+        } else if (localProgress < 0.6) {
+            // Holding (Visible & Steady)
+            opacity = 1;
+            translateY = 0;
+            scale = 1;
+        } else {
+            // Exiting (Fade Out & Scroll Up)
+            // This mimics the "immediately scroll" feeling the user asked for
+            const exitProgress = (localProgress - 0.6) / 0.4;
+            opacity = 1 - exitProgress;
+            translateY = -100 * exitProgress; // Move up significantly to feel like scrolling away
+            scale = 1 - (0.05 * exitProgress);
+        }
+
+        // Apply styles
+        card.style.opacity = opacity.toString();
+        card.style.transform = `translateY(${translateY}px) scale(${scale})`;
+        
+        // Optimization: Hide completely if out of view to save paint
+        card.style.visibility = opacity <= 0.01 ? 'hidden' : 'visible';
+      });
     };
 
     const container = scrollContainerRef.current;
     if (container) {
       container.addEventListener('scroll', handleScroll);
-      // Trigger once on mount
-      handleScroll();
+      handleScroll(); // Init
     }
     return () => {
       if (container) {
@@ -264,7 +305,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       {/* 1. Background Map Layer */}
       <div className="fixed inset-0 z-0">
         <div ref={mapRef} className="w-full h-full" />
-        {/* Darker mask with blur for background effect */}
+        {/* Darker mask with blur for background effect as requested */}
         <div className="absolute inset-0 bg-black/60 pointer-events-none backdrop-blur-[2px]" />
       </div>
 
@@ -282,8 +323,8 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         className="relative z-10 w-full h-full overflow-y-auto no-scrollbar scroll-smooth"
       >
         {/* Hero Section */}
-        <div className="h-screen w-full flex flex-col justify-center items-center text-center p-8 text-white relative z-20 pointer-events-none">
-          <div className="animate-fade-in-up max-w-4xl pointer-events-auto">
+        <div className="h-screen w-full flex flex-col justify-center items-center text-center p-8 text-white relative z-20">
+          <div className="animate-fade-in-up max-w-4xl">
             <span className="inline-block px-4 py-1 rounded-full border border-white/30 bg-black/30 backdrop-blur-sm text-sm font-light mb-6 tracking-widest uppercase">
               TripFlow Journey
             </span>
@@ -306,32 +347,30 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         </div>
 
         {/* Trip Points Stream */}
-        <div className="w-full pb-[50vh]">
+        <div className="w-full">
             {trip.points.map((point, idx) => (
-            // Each section is tall to allow for "Travel Time" on the map
+            // Sticky Container Setup
             <div 
                 key={point.id} 
                 style={{ height: `${SCROLL_HEIGHT_MULTIPLIER * 100}vh` }}
-                className="w-full relative flex flex-col items-center"
+                className="w-full relative"
             >
-                {/* Visual Connector Line between points */}
-                {idx < trip.points.length - 1 && (
-                    <div className="absolute top-[100vh] left-1/2 w-0.5 transform -translate-x-1/2 z-0 overflow-hidden" style={{ height: `calc(${SCROLL_HEIGHT_MULTIPLIER * 100}vh - 100vh)` }}>
-                        <div className="w-full h-full bg-gradient-to-b from-white/50 via-white/20 to-transparent dashed-line-effect" />
-                    </div>
-                )}
+                {/* Visual Guide Line (Optional, simplified) */}
+                <div className="absolute top-0 bottom-0 left-1/2 w-px bg-gradient-to-b from-white/0 via-white/20 to-white/0 transform -translate-x-1/2" />
 
-                {/* Content Card - Positioned at the start of the section, scrolls naturally */}
-                <div className="h-screen w-full flex items-center justify-center p-4 md:p-8 shrink-0 z-10">
+                {/* Sticky Wrapper - Keeps the card centered in viewport while we scroll the section */}
+                <div className="sticky top-0 h-screen w-full flex items-center justify-center p-4 md:p-8 overflow-hidden">
+                    
+                    {/* The Card itself - animated via Ref */}
                     <div 
-                        id={`trip-card-${idx}`}
-                        className="w-full max-w-2xl bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden border border-white/20"
+                        ref={el => cardRefs.current[idx] = el}
+                        className="w-full max-w-2xl bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden border border-white/20 transform will-change-transform opacity-0"
                     >
-                        <div className="relative h-64 md:h-80 overflow-hidden group">
+                        <div className="relative h-56 md:h-72 overflow-hidden group">
                             <img 
                                 src={point.photoUrl} 
                                 alt={point.title} 
-                                className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105" 
+                                className="w-full h-full object-cover" 
                             />
                             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
                             
@@ -346,59 +385,54 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                     <Clock size={12} className="mr-1" />
                                     {point.date.replace('T', ' ')}
                                 </div>
-                                <h2 className="text-3xl font-bold leading-tight text-white drop-shadow-md">{point.title}</h2>
+                                <h2 className="text-2xl md:text-3xl font-bold leading-tight text-white drop-shadow-md">{point.title}</h2>
                             </div>
                         </div>
 
                         <div className="p-6 md:p-8">
                             <div className="flex items-start mb-6">
-                                <div className="bg-indigo-100 p-2 rounded-full mr-4 text-indigo-600">
+                                <div className="bg-indigo-100 p-2 rounded-full mr-4 text-indigo-600 shrink-0">
                                     <MapPin size={20} />
                                 </div>
                                 <div>
-                                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Current Location</h3>
+                                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Location</h3>
                                     <p className="text-lg font-bold text-gray-900 leading-none mb-1">{point.locationName}</p>
                                     <p className="text-sm text-gray-500">{point.address}</p>
                                 </div>
                             </div>
 
-                            <div className="prose prose-indigo max-w-none mb-8">
-                                <p className="text-gray-700 leading-relaxed text-lg whitespace-pre-line">
+                            <div className="prose prose-indigo max-w-none mb-6">
+                                <p className="text-gray-700 leading-relaxed text-base md:text-lg whitespace-pre-line line-clamp-4 md:line-clamp-none">
                                     {point.description}
                                 </p>
                             </div>
 
                             {idx < trip.points.length - 1 && (
-                                <div className="border-t border-gray-200 pt-5 flex items-center justify-between">
+                                <div className="border-t border-gray-200 pt-4 flex items-center justify-between">
                                     <div className="flex items-center text-gray-500 text-sm font-medium">
                                         <Navigation size={16} className="mr-2" />
                                         <span>Next Destination</span>
                                     </div>
-                                    <div className="flex items-center bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-4 py-2 rounded-full text-sm font-bold shadow-lg animate-pulse">
-                                        <span className="mr-2 text-lg">{getTransportIcon(point.transportToNext)}</span>
-                                        <span>{getTransportLabel(point.transportToNext)}로 이동 중...</span>
+                                    <div className="flex items-center bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-full text-sm font-bold border border-indigo-100">
+                                        <span className="mr-2">{getTransportIcon(point.transportToNext)}</span>
+                                        <span>{getTransportLabel(point.transportToNext)}</span>
                                     </div>
                                 </div>
                             )}
-                            {idx === trip.points.length - 1 && (
-                                 <div className="border-t border-gray-200 pt-5 flex items-center justify-center text-indigo-600 font-bold">
+                             {idx === trip.points.length - 1 && (
+                                 <div className="border-t border-gray-200 pt-4 flex items-center justify-center text-indigo-600 font-bold">
                                     🏁 여행 종료
                                  </div>
                             )}
                         </div>
                     </div>
                 </div>
-
-                {/* Empty space for travel visualization */}
-                <div className="flex-1 w-full flex items-center justify-center pointer-events-none">
-                    {/* Optional: Add small indicators or milestones along the path if needed */}
-                </div>
             </div>
             ))}
         </div>
 
         {/* Outro Section */}
-        <div className="h-[80vh] flex flex-col justify-center items-center text-white p-8 bg-gradient-to-t from-black via-black/80 to-transparent">
+        <div className="h-[80vh] flex flex-col justify-center items-center text-white p-8 bg-gradient-to-t from-black via-black/80 to-transparent relative z-20">
             <h2 className="text-4xl font-bold mb-6 drop-shadow-lg">End of Journey</h2>
             <div className="flex space-x-4 mb-12">
                 <button 
