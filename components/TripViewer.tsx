@@ -213,7 +213,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     const transportContent = document.createElement('div');
     transportContent.className = 'transport-icon text-3xl filter drop-shadow-2xl transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2';
     transportContent.style.textShadow = '0 4px 8px rgba(0,0,0,0.5)';
-    // Use the first point's transport type
+    // Ensure we use the FIRST point's transport method to Next point
     transportContent.innerText = getTransportIcon(sortedPoints[0].transportToNext);
 
     const overlay = new window.kakao.maps.CustomOverlay({
@@ -270,11 +270,14 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         map.panTo(currentPos);
         
         // Update Transport Icon based on SORTED points
+        // We want to show the transport mode we are CURRENTLY using.
+        // If we are at index i, moving to i+1, we use sortedPoints[i].transportToNext
         const iconDiv = transportOverlay.getContent();
         if(iconDiv && currentIndex < sortedPoints.length) {
-          const nextTransport = sortedPoints[currentIndex].transportToNext;
-          if (iconDiv.innerText !== getTransportIcon(nextTransport)) {
-              iconDiv.innerText = getTransportIcon(nextTransport);
+          const transportMode = sortedPoints[currentIndex].transportToNext;
+          const iconChar = getTransportIcon(transportMode);
+          if (iconDiv.innerText !== iconChar) {
+              iconDiv.innerText = iconChar;
           }
         }
 

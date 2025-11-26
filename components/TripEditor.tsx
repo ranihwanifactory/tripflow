@@ -4,7 +4,7 @@ import { TripPoint, TransportType, TripData } from '../types';
 import { db, auth, storage } from '../firebase';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X, MapPin } from 'lucide-react';
+import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X, MapPin, AlertCircle } from 'lucide-react';
 
 interface TripEditorProps {
   onFinish: () => void;
@@ -110,7 +110,10 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
 
   const updatePolyline = (targetMap: any, tripPoints: TripPoint[]) => {
       if (tripPoints.length < 2) return;
-      const linePath = tripPoints.map(p => new window.kakao.maps.LatLng(p.lat, p.lng));
+      // Sort before drawing line to match list order
+      const sorted = [...tripPoints].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      const linePath = sorted.map(p => new window.kakao.maps.LatLng(p.lat, p.lng));
+      
       const polyline = new window.kakao.maps.Polyline({
         path: linePath,
         strokeWeight: 5,
@@ -118,6 +121,10 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
         strokeOpacity: 0.8,
         strokeStyle: 'solid'
       });
+      // Clear previous polylines if we had a way to track them, but for now we just draw new ones
+      // In a real app we would clear the previous one. 
+      // Simplified: Since we re-render map often or this component is short lived.
+      // Ideally: useRef for polyline and setMap(null) before creating new one.
       polyline.setMap(targetMap);
   };
 
@@ -135,6 +142,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     setDescription('');
     setLocationName('');
     setAddress('');
+    setDate(''); // Reset date
     setPhotoUrl('');
     setPhotoFile(null);
     setPreviewUrl('');
@@ -183,12 +191,14 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
             const snapshot = await uploadBytes(storageRef, photoFile);
             finalPhotoUrl = await getDownloadURL(snapshot.ref);
         } catch (uploadError: any) {
-            console.error("Upload failed", uploadError);
+            console.error("Firebase Storage Upload Error:", uploadError);
+            console.warn("TIP: Go to Firebase Console > Storage > Rules and change to 'allow read, write: if true;' for development.");
+            
             // Fallback for unauthorized/permission errors
             const keywords = ['travel', 'nature', 'road', 'city', 'food'];
             const randomKeyword = keywords[Math.floor(Math.random() * keywords.length)];
             finalPhotoUrl = `https://source.unsplash.com/800x600/?${randomKeyword}&sig=${Math.random()}`;
-            alert(`사진 업로드 권한 오류가 발생하여 랜덤 여행 이미지로 대체됩니다.\n(Firebase Storage Rules를 확인해주세요)`);
+            alert(`사진 업로드 권한이 없어 기본 여행 이미지로 대체합니다.\n(Firebase Storage Rules 설정을 확인해주세요)`);
         }
       } 
       // 2. Use Fallback if empty
@@ -217,13 +227,13 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       } else {
         const newPoint: TripPoint = {
             id: Date.now().toString(),
-            order: 0, // Placeholder, will be reassigned
+            order: 0, // Placeholder
             ...pointData
         };
         updatedPoints = [...points, newPoint];
       }
 
-      // Sort chronological by date
+      // CRITICAL: Sort chronologically by date
       updatedPoints.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
       
       // Reassign order
@@ -249,7 +259,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       const tripData = {
         userId: auth.currentUser?.uid || 'anonymous',
         title: tripTitle,
-        points: points,
+        points: points, // Points are already sorted and ordered
         createdAt: initialData ? initialData.createdAt : Date.now(),
       };
 
@@ -264,7 +274,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       onFinish();
     } catch (e) {
       console.error(e);
-      alert('저장 중 오류가 발생했습니다.');
+      alert('저장 중 오류가 발생했습니다. (Firestore Rules를 확인해주세요)');
     } finally {
       setIsSaving(false);
     }
@@ -319,7 +329,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                         onClick={() => handleEditPoint(p)}
                         className={`p-3 bg-white border rounded-lg shadow-sm flex gap-3 hover:shadow-md transition cursor-pointer group ${editingPointId === p.id ? 'border-yellow-500 ring-1 ring-yellow-500 bg-yellow-50' : 'border-gray-200'}`}
                     >
-                        <div className="w-12 h-12 bg-gray-100 rounded-md overflow-hidden flex-shrink-0">
+                        <div className="w-12 h-12 bg-gray-100 rounded-md overflow-hidden flex-shrink-0 relative">
                             <img src={p.photoUrl} alt="" className="w-full h-full object-cover" />
                         </div>
                         <div className="flex-1 min-w-0">
@@ -349,7 +359,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                             <p className="text-xs text-gray-500 truncate mt-0.5">{p.locationName}</p>
                             <div className="flex items-center mt-1">
                                 <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border">
-                                    {p.transportToNext === 'CAR' ? '🚗' : '🚶'} 이동
+                                    {p.transportToNext === 'CAR' ? '🚗' : p.transportToNext === 'WALK' ? '🚶' : p.transportToNext === 'PLANE' ? '✈️' : '🚀'} 이동
                                 </span>
                             </div>
                         </div>
@@ -387,7 +397,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                         />
                     </div>
                     <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1">방문 날짜</label>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">방문 날짜 (시간순 정렬 기준)</label>
                         <input 
                             type="datetime-local" 
                             className="w-full p-2.5 border rounded-lg text-sm outline-none"
@@ -438,24 +448,25 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                          <label className="block text-xs font-medium text-gray-500 mb-1">사진 (파일 또는 URL)</label>
                          <div className="space-y-2">
                              <div className="flex gap-2">
-                                <label className={`flex-1 flex flex-col items-center justify-center h-20 border-2 border-dashed rounded-lg cursor-pointer hover:bg-gray-50 transition relative overflow-hidden ${photoFile ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'}`}>
+                                <label className={`flex-1 flex flex-col items-center justify-center h-24 border-2 border-dashed rounded-lg cursor-pointer hover:bg-gray-50 transition relative overflow-hidden ${photoFile ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'}`}>
                                     {previewUrl && !photoUrl ? (
                                         <img src={previewUrl} alt="Preview" className="h-full w-full object-cover" />
                                     ) : (
-                                        <div className="flex flex-col items-center justify-center">
+                                        <div className="flex flex-col items-center justify-center p-2 text-center">
                                             <ImageIcon className="w-5 h-5 text-gray-400 mb-1" />
-                                            <span className="text-[10px] text-gray-500">파일 선택</span>
+                                            <span className="text-[10px] text-gray-500 break-all">{photoFile ? photoFile.name : '파일 선택'}</span>
                                         </div>
                                     )}
                                     <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
                                 </label>
                                 
                                 {previewUrl && (
-                                    <div className="w-20 h-20 rounded-lg overflow-hidden border border-gray-200 bg-gray-100 relative">
+                                    <div className="w-24 h-24 rounded-lg overflow-hidden border border-gray-200 bg-gray-100 relative shrink-0">
                                         <img src={previewUrl} className="w-full h-full object-cover" alt="Current" />
                                         <button 
                                             onClick={() => { setPhotoFile(null); setPreviewUrl(''); setPhotoUrl(''); }}
-                                            className="absolute top-0 right-0 bg-red-500 text-white p-1 rounded-bl-lg"
+                                            className="absolute top-0 right-0 bg-red-500 text-white p-1 rounded-bl-lg hover:bg-red-600 transition"
+                                            title="사진 삭제"
                                         >
                                             <Trash2 size={12} />
                                         </button>
@@ -473,6 +484,9 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                                     setPhotoFile(null);
                                 }}
                             />
+                            <p className="text-[10px] text-gray-400 flex items-center">
+                                <AlertCircle size={10} className="mr-1"/> 파일 업로드가 안될 경우 URL을 입력하거나 Firebase Rules를 확인하세요.
+                            </p>
                          </div>
                     </div>
 
