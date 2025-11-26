@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TripPoint, TransportType, TripData } from '../types';
-import { db, auth } from '../firebase';
+import { db, auth, storage } from '../firebase';
 import { collection, addDoc } from 'firebase/firestore';
-import { MapPin, Calendar, Truck, Save, Plus, Trash2, Search } from 'lucide-react';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { MapPin, Calendar, Truck, Save, Plus, Trash2, Search, Image as ImageIcon, Loader2 } from 'lucide-react';
 
 const TripEditor: React.FC<{ onFinish: () => void }> = ({ onFinish }) => {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -11,6 +12,7 @@ const TripEditor: React.FC<{ onFinish: () => void }> = ({ onFinish }) => {
   const [points, setPoints] = useState<TripPoint[]>([]);
   const [tripTitle, setTripTitle] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingPoint, setIsUploadingPoint] = useState(false);
 
   // Form State
   const [currentLat, setCurrentLat] = useState<number>(37.566826);
@@ -21,7 +23,11 @@ const TripEditor: React.FC<{ onFinish: () => void }> = ({ onFinish }) => {
   const [transport, setTransport] = useState<TransportType>('CAR');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [photoUrl, setPhotoUrl] = useState(`https://picsum.photos/400/300?random=${Math.random()}`);
+  
+  // Photo State
+  const [photoUrl, setPhotoUrl] = useState('');
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string>('');
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -56,47 +62,79 @@ const TripEditor: React.FC<{ onFinish: () => void }> = ({ onFinish }) => {
     });
   }, []);
 
-  const handleAddPoint = () => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setPhotoFile(file);
+      setPreviewUrl(URL.createObjectURL(file));
+      setPhotoUrl(''); // Clear manual URL if file selected
+    }
+  };
+
+  const handleAddPoint = async () => {
     if (!title || !date) {
       alert('제목과 날짜는 필수입니다.');
       return;
     }
 
-    const newPoint: TripPoint = {
-      id: Date.now().toString(),
-      lat: currentLat,
-      lng: currentLng,
-      locationName: locationName || address,
-      address,
-      date,
-      transportToNext: transport,
-      title,
-      description,
-      photoUrl,
-      order: points.length,
-    };
+    setIsUploadingPoint(true);
+    let finalPhotoUrl = photoUrl;
 
-    const newPoints = [...points, newPoint];
-    setPoints(newPoints);
-    
-    // Draw line
-    if (map && newPoints.length > 1) {
-       const linePath = newPoints.map(p => new window.kakao.maps.LatLng(p.lat, p.lng));
-       const polyline = new window.kakao.maps.Polyline({
-        path: linePath,
-        strokeWeight: 5,
-        strokeColor: '#4F46E5',
-        strokeOpacity: 0.8,
-        strokeStyle: 'solid'
-      });
-      polyline.setMap(map);
+    try {
+      // Handle File Upload if exists
+      if (photoFile) {
+        const userId = auth.currentUser?.uid || 'anonymous';
+        const storageRef = ref(storage, `trip_images/${userId}/${Date.now()}_${photoFile.name}`);
+        const snapshot = await uploadBytes(storageRef, photoFile);
+        finalPhotoUrl = await getDownloadURL(snapshot.ref);
+      } else if (!finalPhotoUrl) {
+        // Fallback to random image if neither file nor url is provided
+        finalPhotoUrl = `https://picsum.photos/400/300?random=${Math.random()}`;
+      }
+
+      const newPoint: TripPoint = {
+        id: Date.now().toString(),
+        lat: currentLat,
+        lng: currentLng,
+        locationName: locationName || address,
+        address,
+        date,
+        transportToNext: transport,
+        title,
+        description,
+        photoUrl: finalPhotoUrl,
+        order: points.length,
+      };
+
+      const newPoints = [...points, newPoint];
+      setPoints(newPoints);
+      
+      // Draw line
+      if (map && newPoints.length > 1) {
+         const linePath = newPoints.map(p => new window.kakao.maps.LatLng(p.lat, p.lng));
+         const polyline = new window.kakao.maps.Polyline({
+          path: linePath,
+          strokeWeight: 5,
+          strokeColor: '#4F46E5',
+          strokeOpacity: 0.8,
+          strokeStyle: 'solid'
+        });
+        polyline.setMap(map);
+      }
+
+      // Reset Form (keep date/transport for convenience)
+      setTitle('');
+      setDescription('');
+      setLocationName('');
+      setPhotoUrl('');
+      setPhotoFile(null);
+      setPreviewUrl('');
+    } catch (error) {
+      console.error("Error adding point:", error);
+      alert("지점 등록 중 오류가 발생했습니다.");
+    } finally {
+      setIsUploadingPoint(false);
     }
-
-    // Reset Form
-    setTitle('');
-    setDescription('');
-    setLocationName('');
-    setPhotoUrl(`https://picsum.photos/400/300?random=${Math.random()}`);
   };
 
   const handleSaveTrip = async () => {
@@ -196,19 +234,64 @@ const TripEditor: React.FC<{ onFinish: () => void }> = ({ onFinish }) => {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
-             <input 
-              type="text" 
-              className="w-full p-2 border rounded text-sm"
-              placeholder="사진 URL (랜덤 생성됨)"
-              value={photoUrl}
-              onChange={(e) => setPhotoUrl(e.target.value)}
-            />
+             
+             {/* Photo Upload Section */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-gray-500">사진 등록</label>
+              
+              <label className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer hover:bg-gray-50 transition relative overflow-hidden ${photoFile ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'}`}>
+                {previewUrl ? (
+                    <img src={previewUrl} alt="Preview" className="h-full w-full object-cover rounded-lg" />
+                ) : (
+                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                        <ImageIcon className="w-8 h-8 text-gray-400 mb-2" />
+                        <p className="text-xs text-gray-500">클릭하여 이미지 업로드</p>
+                    </div>
+                )}
+                {/* Close/Remove button for preview */}
+                {previewUrl && (
+                  <button 
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setPhotoFile(null);
+                      setPreviewUrl('');
+                    }}
+                    className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 shadow-sm hover:bg-red-600"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
+                <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
+              </label>
+
+              <input 
+                type="text" 
+                className="w-full p-2 border rounded text-sm text-gray-600"
+                placeholder="또는 이미지 URL 직접 입력"
+                value={photoUrl}
+                onChange={(e) => {
+                    setPhotoUrl(e.target.value);
+                    if(e.target.value) {
+                        setPhotoFile(null);
+                        setPreviewUrl('');
+                    }
+                }}
+              />
+            </div>
 
             <button 
               onClick={handleAddPoint}
-              className="w-full bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 transition"
+              disabled={isUploadingPoint}
+              className={`w-full text-white py-2 rounded-lg transition flex justify-center items-center ${isUploadingPoint ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
             >
-              지점 추가하기
+              {isUploadingPoint ? (
+                <>
+                  <Loader2 className="animate-spin mr-2" size={18} />
+                  업로드 중...
+                </>
+              ) : (
+                '지점 추가하기'
+              )}
             </button>
           </div>
         </div>
@@ -218,9 +301,12 @@ const TripEditor: React.FC<{ onFinish: () => void }> = ({ onFinish }) => {
             <div className="space-y-2">
               {points.map((p, idx) => (
                 <div key={p.id} className="p-3 bg-white border rounded-lg shadow-sm flex justify-between items-start">
-                  <div>
-                    <div className="font-bold text-sm text-indigo-900">#{idx + 1} {p.title}</div>
-                    <div className="text-xs text-gray-500">{p.locationName}</div>
+                  <div className="flex items-start">
+                    {p.photoUrl && <img src={p.photoUrl} alt="thumb" className="w-10 h-10 rounded object-cover mr-2 bg-gray-100" />}
+                    <div>
+                      <div className="font-bold text-sm text-indigo-900">#{idx + 1} {p.title}</div>
+                      <div className="text-xs text-gray-500">{p.locationName}</div>
+                    </div>
                   </div>
                   <button 
                     onClick={() => setPoints(points.filter(pt => pt.id !== p.id))}
@@ -235,8 +321,8 @@ const TripEditor: React.FC<{ onFinish: () => void }> = ({ onFinish }) => {
 
         <button 
           onClick={handleSaveTrip}
-          disabled={isSaving}
-          className="w-full bg-green-600 text-white py-3 rounded-xl font-bold shadow-lg hover:bg-green-700 transition flex items-center justify-center"
+          disabled={isSaving || points.length < 2}
+          className={`w-full text-white py-3 rounded-xl font-bold shadow-lg flex items-center justify-center ${isSaving || points.length < 2 ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
         >
           <Save size={20} className="mr-2" />
           {isSaving ? '저장 중...' : '여행 지도 발행하기'}
