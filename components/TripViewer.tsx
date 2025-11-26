@@ -11,6 +11,8 @@ interface TripViewerProps {
 
 // Increased multiplier for slower, more comfortable scrolling (5 screens per point)
 const SCROLL_HEIGHT_MULTIPLIER = 5;
+// The portion of the scroll segment where the map stays stationary at the checkpoint (Sync Logic)
+const HOLD_THRESHOLD = 0.15; 
 
 const getTransportIcon = (type: TransportType) => {
   switch (type) {
@@ -163,7 +165,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
   }, [pathPoints, trip]);
 
-  // 2. Handle Scroll Logic
+  // 2. Handle Scroll Logic (Sync Map & Content)
   useEffect(() => {
     const handleScroll = () => {
       if (!scrollContainerRef.current || !map || !transportOverlay || pathPoints.length < 2) return;
@@ -173,27 +175,53 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       const vh = window.innerHeight;
 
       // Calculate progress relative to the content sections
-      // We subtract the initial Hero section (vh)
-      // Each segment is SCROLL_HEIGHT_MULTIPLIER * vh long
       const sectionHeight = vh * SCROLL_HEIGHT_MULTIPLIER;
       const rawProgress = (scrollTop - vh) / sectionHeight;
       const maxIndex = pathPoints.length - 1;
       
-      // 1. Move Marker Logic
-      const progress = Math.min(Math.max(rawProgress, 0), maxIndex);
-      const index = Math.floor(progress);
-      const segmentProgress = progress - index;
+      // -- SYNC LOGIC --
+      // Calculate 'Visual Map Progress' distinct from 'Scroll Progress'
+      // We want to HOLD the map at the checkpoint when the card is fully visible.
+      let mapProgress = 0;
+      
+      if (rawProgress <= 0) {
+        mapProgress = 0;
+      } else if (rawProgress >= maxIndex) {
+        mapProgress = maxIndex;
+      } else {
+        const index = Math.floor(rawProgress);
+        const segmentProgress = rawProgress - index;
+        
+        // 1. Hold Phase (Card Visible): 0.0 ~ HOLD_THRESHOLD
+        if (segmentProgress < HOLD_THRESHOLD) {
+            mapProgress = index;
+        } 
+        // 2. Hold Phase at End (Next Card Visible): (1-HOLD_THRESHOLD) ~ 1.0
+        else if (segmentProgress > 1 - HOLD_THRESHOLD) {
+            mapProgress = index + 1;
+        } 
+        // 3. Travel Phase: HOLD_THRESHOLD ~ (1-HOLD_THRESHOLD)
+        else {
+            const moveRange = 1 - 2 * HOLD_THRESHOLD;
+            const normalizedMove = (segmentProgress - HOLD_THRESHOLD) / moveRange;
+            mapProgress = index + normalizedMove;
+        }
+      }
 
-      if (index >= maxIndex) {
+      // 1. Move Marker Logic based on mapProgress
+      const currentIndex = Math.floor(mapProgress);
+      const currentSegmentProgress = mapProgress - currentIndex;
+
+      if (currentIndex >= maxIndex) {
          const lastPos = pathPoints[maxIndex].latlng;
          transportOverlay.setPosition(lastPos);
          map.panTo(lastPos);
       } else {
-        const start = pathPoints[index].latlng;
-        const end = pathPoints[index + 1].latlng;
+        const start = pathPoints[currentIndex].latlng;
+        const end = pathPoints[currentIndex + 1].latlng;
         
-        const currentLat = start.getLat() + (end.getLat() - start.getLat()) * segmentProgress;
-        const currentLng = start.getLng() + (end.getLng() - start.getLng()) * segmentProgress;
+        const currentLat = start.getLat() + (end.getLat() - start.getLat()) * currentSegmentProgress;
+        const currentLng = start.getLng() + (end.getLng() - start.getLng()) * currentSegmentProgress;
         const currentPos = new window.kakao.maps.LatLng(currentLat, currentLng);
 
         transportOverlay.setPosition(currentPos);
@@ -201,34 +229,35 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         
         const iconDiv = transportOverlay.getContent();
         if(iconDiv) {
-          const nextTransport = trip.points[index].transportToNext;
+          const nextTransport = trip.points[currentIndex].transportToNext;
           if (iconDiv.innerText !== getTransportIcon(nextTransport)) {
               iconDiv.innerText = getTransportIcon(nextTransport);
           }
         }
       }
 
-      // 2. Animate Cards Opacity (Direct DOM manipulation for performance)
+      // 2. Animate Cards Opacity (Synced with HOLD_THRESHOLD)
       trip.points.forEach((_, idx) => {
         const card = document.getElementById(`trip-card-${idx}`);
         if (card) {
-          // Calculate distance from the 'perfect' center point of this segment
           const distance = Math.abs(rawProgress - idx);
           
-          // Fade out as we move away.
-          // 0 distance = 1 opacity
-          // > 0.3 distance = 0 opacity (fades out quickly to show map)
-          let opacity = Math.max(0, 1 - distance * 3);
+          let opacity = 0;
+          if (distance <= HOLD_THRESHOLD) {
+              // Fully visible during hold phase
+              opacity = 1;
+          } else {
+              // Fade out quickly after hold phase to reveal map
+              // Fade complete by HOLD_THRESHOLD + 0.2
+              const fadeDistance = distance - HOLD_THRESHOLD;
+              opacity = Math.max(0, 1 - fadeDistance * 5); 
+          }
           
-          // Apply styles
           card.style.opacity = opacity.toString();
-          // Slight scale and translate effect
-          const scale = 0.9 + (0.1 * opacity);
-          const translateY = 30 * (1 - opacity);
+          const scale = 0.95 + (0.05 * opacity);
+          const translateY = 20 * (1 - opacity);
           card.style.transform = `scale(${scale}) translateY(${translateY}px)`;
-          
-          // Disable pointer events if not visible to prevent accidental clicks
-          card.style.pointerEvents = opacity > 0.5 ? 'auto' : 'none';
+          card.style.pointerEvents = opacity > 0.8 ? 'auto' : 'none';
         }
       });
     };
@@ -253,7 +282,8 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       {/* 1. Background Map Layer */}
       <div className="fixed inset-0 z-0">
         <div ref={mapRef} className="w-full h-full" />
-        <div className="absolute inset-0 bg-black/40 pointer-events-none backdrop-blur-[1px]" />
+        {/* Darker mask with blur for background effect */}
+        <div className="absolute inset-0 bg-black/60 pointer-events-none backdrop-blur-[2px]" />
       </div>
 
       {/* 2. Controls */}
