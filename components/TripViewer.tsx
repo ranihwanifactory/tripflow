@@ -55,14 +55,21 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   const [newComment, setNewComment] = useState('');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
-  // Memoize path points
+  // 0. Sort points chronologically to ensure correct path order regardless of saved order
+  const sortedPoints = useMemo(() => {
+    if (!trip || !trip.points) return [];
+    // Sort by Date timestamp
+    return [...trip.points].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [trip]);
+
+  // Memoize path points based on SORTED points
   const pathPoints = useMemo(() => {
-    if (!window.kakao || !window.kakao.maps) return [];
-    return trip.points.map(p => ({
+    if (!window.kakao || !window.kakao.maps || sortedPoints.length === 0) return [];
+    return sortedPoints.map(p => ({
       latlng: new window.kakao.maps.LatLng(p.lat, p.lng),
       data: p
     }));
-  }, [trip]);
+  }, [sortedPoints]);
 
   // Fetch Reviews
   useEffect(() => {
@@ -206,7 +213,8 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     const transportContent = document.createElement('div');
     transportContent.className = 'transport-icon text-3xl filter drop-shadow-2xl transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2';
     transportContent.style.textShadow = '0 4px 8px rgba(0,0,0,0.5)';
-    transportContent.innerText = getTransportIcon(trip.points[0].transportToNext);
+    // Use the first point's transport type
+    transportContent.innerText = getTransportIcon(sortedPoints[0].transportToNext);
 
     const overlay = new window.kakao.maps.CustomOverlay({
       position: pathPoints[0].latlng,
@@ -220,7 +228,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         resizeObserver.disconnect();
     };
 
-  }, [pathPoints, trip]);
+  }, [pathPoints, sortedPoints, trip]); // Added sortedPoints
 
   // 2. Handle Scroll Logic (Sticky & Animation & Dynamic Polyline)
   useEffect(() => {
@@ -261,10 +269,10 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         transportOverlay.setPosition(currentPos);
         map.panTo(currentPos);
         
-        // Update Transport Icon
+        // Update Transport Icon based on SORTED points
         const iconDiv = transportOverlay.getContent();
-        if(iconDiv) {
-          const nextTransport = trip.points[currentIndex].transportToNext;
+        if(iconDiv && currentIndex < sortedPoints.length) {
+          const nextTransport = sortedPoints[currentIndex].transportToNext;
           if (iconDiv.innerText !== getTransportIcon(nextTransport)) {
               iconDiv.innerText = getTransportIcon(nextTransport);
           }
@@ -281,8 +289,8 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         traveledPolyline.setPath(fullPath);
       }
 
-      // Card Animation
-      trip.points.forEach((_, idx) => {
+      // Card Animation using sortedPoints
+      sortedPoints.forEach((_, idx) => {
         const card = cardRefs.current[idx];
         if (!card) return;
 
@@ -331,7 +339,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         container.removeEventListener('scroll', handleScroll);
       }
     };
-  }, [map, transportOverlay, traveledPolyline, pathPoints, trip]);
+  }, [map, transportOverlay, traveledPolyline, pathPoints, sortedPoints]); // Depend on sortedPoints
 
 
   return (
@@ -381,7 +389,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
             <div className="flex items-center justify-center space-x-6 text-white/80 text-sm md:text-base font-light tracking-wide">
                <span className="flex items-center"><Clock size={16} className="mr-2"/> {new Date(trip.createdAt).toLocaleDateString()}</span>
                <span className="w-1 h-1 bg-white rounded-full"/>
-               <span className="flex items-center"><MapPin size={16} className="mr-2"/> {trip.points.length} Checkpoints</span>
+               <span className="flex items-center"><MapPin size={16} className="mr-2"/> {sortedPoints.length} Checkpoints</span>
             </div>
           </div>
           
@@ -393,9 +401,9 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
           </div>
         </div>
 
-        {/* Trip Points Stream */}
+        {/* Trip Points Stream (Using sortedPoints) */}
         <div className="w-full">
-            {trip.points.map((point, idx) => (
+            {sortedPoints.map((point, idx) => (
             <div 
                 key={point.id} 
                 style={{ height: `${SCROLL_HEIGHT_MULTIPLIER * 100}vh` }}
@@ -451,7 +459,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                 </p>
                             </div>
 
-                            {idx < trip.points.length - 1 && (
+                            {idx < sortedPoints.length - 1 && (
                                 <div className="border-t border-white/10 pt-3 flex items-center justify-between">
                                     <div className="flex items-center text-gray-500 text-xs font-medium">
                                         <Navigation size={12} className="mr-1" />
@@ -463,7 +471,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                     </div>
                                 </div>
                             )}
-                             {idx === trip.points.length - 1 && (
+                             {idx === sortedPoints.length - 1 && (
                                  <div className="border-t border-white/10 pt-3 flex items-center justify-center text-indigo-400 font-bold text-sm">
                                     🏁 여행 종료
                                  </div>
