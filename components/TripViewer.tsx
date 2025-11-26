@@ -144,6 +144,12 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     const newMap = new window.kakao.maps.Map(mapRef.current, options);
     setMap(newMap);
 
+    // Fix map rendering issues by forcing layout update
+    setTimeout(() => {
+        newMap.relayout();
+        newMap.setCenter(pathPoints[0].latlng);
+    }, 200);
+
     const path = pathPoints.map(p => p.latlng);
     
     // Background Line (Total Path) - Faint Color
