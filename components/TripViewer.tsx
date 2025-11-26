@@ -1,9 +1,9 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { TripData, TransportType, Review, TripPoint } from '../types';
-import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send, Globe, Layers } from 'lucide-react';
+import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send, Globe, Layers, Trash2, Pencil, Check } from 'lucide-react';
 import { db, auth } from '../firebase';
-import { collection, addDoc, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, query, where, onSnapshot, deleteDoc, updateDoc, doc } from 'firebase/firestore';
 
 interface TripViewerProps {
   trip: TripData;
@@ -66,6 +66,11 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   const [newComment, setNewComment] = useState('');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
+  // Edit Review State
+  const [editingReviewId, setEditingReviewId] = useState<string | null>(null);
+  const [editReviewText, setEditReviewText] = useState('');
+  const [editReviewRating, setEditReviewRating] = useState(5);
+
   // 0. Sort points chronologically to ensure correct path order regardless of saved order
   const sortedPoints = useMemo(() => {
     if (!trip || !trip.points) return [];
@@ -91,6 +96,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const fetchedReviews: Review[] = [];
         snapshot.forEach(doc => fetchedReviews.push({ id: doc.id, ...doc.data() } as Review));
+        // Sort client side to allow working without index initially
         fetchedReviews.sort((a, b) => b.createdAt - a.createdAt);
         setReviews(fetchedReviews);
     });
@@ -132,6 +138,46 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     } finally {
         setIsSubmittingReview(false);
     }
+  };
+
+  // Delete Review
+  const handleDeleteReview = async (reviewId: string) => {
+      if (!window.confirm("정말로 이 리뷰를 삭제하시겠습니까?")) return;
+      try {
+          await deleteDoc(doc(db, 'reviews', reviewId));
+      } catch (e) {
+          console.error("Error deleting review:", e);
+          alert("리뷰 삭제 중 오류가 발생했습니다.");
+      }
+  };
+
+  // Start Editing Review
+  const startEditing = (review: Review) => {
+      setEditingReviewId(review.id);
+      setEditReviewText(review.text);
+      setEditReviewRating(review.rating);
+  };
+
+  // Cancel Editing
+  const cancelEditing = () => {
+      setEditingReviewId(null);
+      setEditReviewText('');
+      setEditReviewRating(5);
+  };
+
+  // Update Review
+  const handleUpdateReview = async (reviewId: string) => {
+      if (!editReviewText.trim()) return alert("내용을 입력해주세요.");
+      try {
+          await updateDoc(doc(db, 'reviews', reviewId), {
+              text: editReviewText,
+              rating: editReviewRating
+          });
+          setEditingReviewId(null);
+      } catch (e) {
+          console.error("Error updating review:", e);
+          alert("리뷰 수정 중 오류가 발생했습니다.");
+      }
   };
 
   // Toggle Map Type
@@ -560,7 +606,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                         <p className="text-center text-white/50 py-4 text-xs">아직 작성된 리뷰가 없습니다.</p>
                     ) : (
                         reviews.map((review) => (
-                            <div key={review.id} className="bg-black/40 p-3 rounded-lg border border-white/5">
+                            <div key={review.id} className="bg-black/40 p-3 rounded-lg border border-white/5 relative group">
                                 <div className="flex justify-between items-start mb-1">
                                     <div className="flex items-center">
                                         <div className="w-6 h-6 rounded-full bg-indigo-500 flex items-center justify-center text-xs font-bold mr-2 overflow-hidden border border-white/20">
@@ -568,14 +614,66 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                         </div>
                                         <div>
                                             <div className="font-bold text-xs text-white">{review.userName}</div>
-                                            <div className="flex items-center text-yellow-400">
-                                                {[...Array(review.rating)].map((_, i) => <Star key={i} size={8} fill="currentColor" />)}
-                                            </div>
+                                            {editingReviewId === review.id ? (
+                                                <div className="flex items-center space-x-1 mt-1">
+                                                     {[1, 2, 3, 4, 5].map((star) => (
+                                                        <button key={star} onClick={() => setEditReviewRating(star)} className="focus:outline-none">
+                                                            <Star size={10} className={star <= editReviewRating ? "text-yellow-400" : "text-gray-600"} fill={star <= editReviewRating ? "currentColor" : "currentColor"}/>
+                                                        </button>
+                                                     ))}
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center text-yellow-400">
+                                                    {[...Array(review.rating)].map((_, i) => <Star key={i} size={8} fill="currentColor" />)}
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                     <span className="text-[10px] text-white/40">{new Date(review.createdAt).toLocaleDateString()}</span>
                                 </div>
-                                <p className="text-white/80 text-xs ml-8 leading-snug">{review.text}</p>
+
+                                {/* Edit Mode vs View Mode */}
+                                {editingReviewId === review.id ? (
+                                    <div className="mt-2">
+                                        <input 
+                                            type="text" 
+                                            value={editReviewText}
+                                            onChange={(e) => setEditReviewText(e.target.value)}
+                                            className="w-full bg-white/10 text-white text-xs p-2 rounded mb-2 border border-white/20 focus:outline-none"
+                                            autoFocus
+                                        />
+                                        <div className="flex justify-end gap-2">
+                                            <button onClick={cancelEditing} className="p-1 text-gray-400 hover:text-white rounded bg-white/10">
+                                                <X size={12} />
+                                            </button>
+                                            <button onClick={() => handleUpdateReview(review.id)} className="p-1 text-green-400 hover:text-green-300 rounded bg-green-500/20 border border-green-500/30">
+                                                <Check size={12} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <p className="text-white/80 text-xs ml-8 leading-snug">{review.text}</p>
+                                )}
+
+                                {/* Owner Controls */}
+                                {auth.currentUser?.uid === review.userId && editingReviewId !== review.id && (
+                                    <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button 
+                                            onClick={() => startEditing(review)}
+                                            className="p-1 text-gray-400 hover:text-indigo-400 bg-black/50 rounded"
+                                            title="수정"
+                                        >
+                                            <Pencil size={10} />
+                                        </button>
+                                        <button 
+                                            onClick={() => handleDeleteReview(review.id)}
+                                            className="p-1 text-gray-400 hover:text-red-400 bg-black/50 rounded"
+                                            title="삭제"
+                                        >
+                                            <Trash2 size={10} />
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         ))
                     )}
