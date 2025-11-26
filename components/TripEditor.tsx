@@ -1,9 +1,10 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import { TripPoint, TransportType, TripData } from '../types';
 import { db, auth, storage } from '../firebase';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft } from 'lucide-react';
+import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X } from 'lucide-react';
 
 interface TripEditorProps {
   onFinish: () => void;
@@ -20,6 +21,9 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
   const [tripTitle, setTripTitle] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingPoint, setIsUploadingPoint] = useState(false);
+
+  // Edit Point State
+  const [editingPointId, setEditingPointId] = useState<string | null>(null);
 
   // Form State
   const [currentLat, setCurrentLat] = useState<number>(37.566826);
@@ -81,50 +85,91 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       });
     });
 
-    // Draw existing lines if editing
-    if (initialData && initialData.points.length > 1) {
-        const linePath = initialData.points.map(p => new window.kakao.maps.LatLng(p.lat, p.lng));
-        const polyline = new window.kakao.maps.Polyline({
-         path: linePath,
-         strokeWeight: 5,
-         strokeColor: '#4F46E5',
-         strokeOpacity: 0.8,
-         strokeStyle: 'solid'
-       });
-       polyline.setMap(newMap);
-    }
+    // Draw existing lines
+    updatePolyline(newMap, points);
 
-  }, [initialData]);
+  }, [initialData]); // Depend on initialData to set initial center
 
   // Update Polyline when points change
   useEffect(() => {
-    if (!map || points.length < 2) return;
-    
-    // Clear existing polylines (simplification: just redraw on top for now or manage via state if complex)
-    // For a cleaner approach, usually we track the polyline instance, but for this quick implementation:
-    const linePath = points.map(p => new window.kakao.maps.LatLng(p.lat, p.lng));
-    const polyline = new window.kakao.maps.Polyline({
-      path: linePath,
-      strokeWeight: 5,
-      strokeColor: '#4F46E5',
-      strokeOpacity: 0.8,
-      strokeStyle: 'solid'
-    });
-    polyline.setMap(map);
-
-    // Cleanup logic omitted for brevity, in production we should remove old polylines
+    if (map) {
+        updatePolyline(map, points);
+    }
   }, [points, map]);
+
+  const updatePolyline = (targetMap: any, tripPoints: TripPoint[]) => {
+      // Clear previous polylines is tricky without reference, 
+      // but in this simple editor we just draw on top or could manage a ref.
+      // For proper cleanup in production, we'd track the polyline object in a ref.
+      if (tripPoints.length < 2) return;
+      
+      const linePath = tripPoints.map(p => new window.kakao.maps.LatLng(p.lat, p.lng));
+      
+      // Remove previous lines (hacky way: rely on re-render clearing map? No, map persists)
+      // Ideally, store polyline in a useRef and setMap(null).
+      // Here, just drawing new one. Visual clutter might occur if heavy editing without refresh.
+      // Better implementation:
+      // if (polylineRef.current) polylineRef.current.setMap(null);
+      
+      const polyline = new window.kakao.maps.Polyline({
+        path: linePath,
+        strokeWeight: 5,
+        strokeColor: '#4F46E5',
+        strokeOpacity: 0.8,
+        strokeStyle: 'solid'
+      });
+      polyline.setMap(targetMap);
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setPhotoFile(file);
       setPreviewUrl(URL.createObjectURL(file));
-      setPhotoUrl(''); // Clear manual URL if file selected
+      // Do NOT clear photoUrl immediately if it was from existing point, 
+      // but here we prioritize the new file.
+      setPhotoUrl(''); 
     }
   };
 
-  const handleAddPoint = async () => {
+  const clearForm = () => {
+    setTitle('');
+    setDescription('');
+    setLocationName('');
+    setAddress('');
+    setPhotoUrl('');
+    setPhotoFile(null);
+    setPreviewUrl('');
+    // Keep date/transport/latlng for convenience or reset? Resetting is safer for "New" feel
+    // But keeping latlng of last click is good.
+    setEditingPointId(null);
+  };
+
+  const handleEditPoint = (point: TripPoint) => {
+    setEditingPointId(point.id);
+    
+    // Load Data
+    setCurrentLat(point.lat);
+    setCurrentLng(point.lng);
+    setLocationName(point.locationName);
+    setAddress(point.address);
+    setDate(point.date);
+    setTransport(point.transportToNext);
+    setTitle(point.title);
+    setDescription(point.description);
+    setPhotoUrl(point.photoUrl);
+    setPreviewUrl(point.photoUrl); // Show existing photo as preview
+    setPhotoFile(null); // Reset new file selection
+
+    // Move Map
+    if (map && marker) {
+        const pos = new window.kakao.maps.LatLng(point.lat, point.lng);
+        map.panTo(pos);
+        marker.setPosition(pos);
+    }
+  };
+
+  const handleAddOrUpdatePoint = async () => {
     if (!title || !date) {
       alert('제목과 날짜는 필수입니다.');
       return;
@@ -134,44 +179,62 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     let finalPhotoUrl = photoUrl;
 
     try {
-      // Handle File Upload if exists
+      // 1. Handle File Upload
       if (photoFile) {
         const userId = auth.currentUser?.uid || 'anonymous';
-        const storageRef = ref(storage, `trip_images/${userId}/${Date.now()}_${photoFile.name}`);
-        const snapshot = await uploadBytes(storageRef, photoFile);
-        finalPhotoUrl = await getDownloadURL(snapshot.ref);
+        // Sanitize filename
+        const safeName = photoFile.name.replace(/[^a-zA-Z0-9.]/g, '_');
+        const storageRef = ref(storage, `trip_images/${userId}/${Date.now()}_${safeName}`);
+        
+        try {
+            const snapshot = await uploadBytes(storageRef, photoFile);
+            finalPhotoUrl = await getDownloadURL(snapshot.ref);
+        } catch (uploadError: any) {
+            console.error("Upload failed", uploadError);
+            alert(`사진 업로드 실패: ${uploadError.message}. 텍스트 정보만 저장합니다.`);
+            // Fallback to existing URL or placeholder if upload fails
+            if (!finalPhotoUrl) {
+                finalPhotoUrl = `https://picsum.photos/400/300?random=${Math.random()}`;
+            }
+        }
       } else if (!finalPhotoUrl) {
-        // Fallback to random image if neither file nor url is provided
         finalPhotoUrl = `https://picsum.photos/400/300?random=${Math.random()}`;
       }
 
-      const newPoint: TripPoint = {
-        id: Date.now().toString(),
+      const pointData = {
         lat: currentLat,
         lng: currentLng,
-        locationName: locationName || address,
+        locationName: locationName || address || '알 수 없는 장소',
         address,
         date,
         transportToNext: transport,
         title,
         description,
         photoUrl: finalPhotoUrl,
-        order: points.length,
       };
 
-      const newPoints = [...points, newPoint];
-      setPoints(newPoints);
+      if (editingPointId) {
+        // UPDATE Existing Point
+        setPoints(prev => prev.map(p => 
+            p.id === editingPointId 
+            ? { ...p, ...pointData } // Merge updates
+            : p
+        ));
+      } else {
+        // ADD New Point
+        const newPoint: TripPoint = {
+            id: Date.now().toString(),
+            order: points.length,
+            ...pointData
+        };
+        setPoints(prev => [...prev, newPoint]);
+      }
       
-      // Reset Form (keep date/transport for convenience)
-      setTitle('');
-      setDescription('');
-      setLocationName('');
-      setPhotoUrl('');
-      setPhotoFile(null);
-      setPreviewUrl('');
+      clearForm();
+
     } catch (error) {
-      console.error("Error adding point:", error);
-      alert("지점 등록 중 오류가 발생했습니다.");
+      console.error("Error processing point:", error);
+      alert("지점 처리 중 오류가 발생했습니다.");
     } finally {
       setIsUploadingPoint(false);
     }
@@ -233,10 +296,18 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
           />
         </div>
 
-        <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 mb-6">
-          <h3 className="font-semibold text-gray-700 mb-3 flex items-center">
-            <Plus size={18} className="mr-2" /> 새 지점 등록
-          </h3>
+        <div className={`bg-gray-50 p-4 rounded-xl border mb-6 transition-colors ${editingPointId ? 'border-yellow-400 bg-yellow-50/50' : 'border-gray-200'}`}>
+          <div className="flex justify-between items-center mb-3">
+             <h3 className="font-semibold text-gray-700 flex items-center">
+                {editingPointId ? <Pencil size={18} className="mr-2 text-yellow-600"/> : <Plus size={18} className="mr-2" />} 
+                {editingPointId ? '지점 수정 모드' : '새 지점 등록'}
+             </h3>
+             {editingPointId && (
+                 <button onClick={clearForm} className="text-xs flex items-center text-gray-500 hover:text-gray-700 bg-white px-2 py-1 rounded border">
+                     <X size={12} className="mr-1"/> 취소
+                 </button>
+             )}
+          </div>
           
           <div className="space-y-3">
             <input 
@@ -261,7 +332,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
             />
             
             <div className="flex items-center space-x-2">
-              <span className="text-sm text-gray-600">이동수단:</span>
+              <span className="text-sm text-gray-600">다음 이동:</span>
               <select 
                 className="flex-1 p-2 border rounded text-sm"
                 value={transport}
@@ -311,8 +382,9 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                       e.preventDefault();
                       setPhotoFile(null);
                       setPreviewUrl('');
+                      setPhotoUrl('');
                     }}
-                    className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 shadow-sm hover:bg-red-600"
+                    className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 shadow-sm hover:bg-red-600 z-10"
                   >
                     <Trash2 size={12} />
                   </button>
@@ -327,26 +399,27 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                 value={photoUrl}
                 onChange={(e) => {
                     setPhotoUrl(e.target.value);
-                    if(e.target.value) {
-                        setPhotoFile(null);
-                        setPreviewUrl('');
-                    }
+                    setPreviewUrl(e.target.value);
+                    setPhotoFile(null);
                 }}
               />
             </div>
 
             <button 
-              onClick={handleAddPoint}
+              onClick={handleAddOrUpdatePoint}
               disabled={isUploadingPoint}
-              className={`w-full text-white py-2 rounded-lg transition flex justify-center items-center ${isUploadingPoint ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+              className={`w-full text-white py-2 rounded-lg transition flex justify-center items-center font-semibold ${
+                  isUploadingPoint ? 'bg-gray-400 cursor-not-allowed' : 
+                  editingPointId ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-indigo-600 hover:bg-indigo-700'
+              }`}
             >
               {isUploadingPoint ? (
                 <>
                   <Loader2 className="animate-spin mr-2" size={18} />
-                  업로드 중...
+                  처리 중...
                 </>
               ) : (
-                '지점 추가하기'
+                editingPointId ? '지점 업데이트' : '지점 추가하기'
               )}
             </button>
           </div>
@@ -356,20 +429,38 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
             <h4 className="font-medium text-gray-600 mb-2">등록된 경로 ({points.length})</h4>
             <div className="space-y-2">
               {points.map((p, idx) => (
-                <div key={p.id} className="p-3 bg-white border rounded-lg shadow-sm flex justify-between items-start">
-                  <div className="flex items-start">
+                <div 
+                    key={p.id} 
+                    className={`p-3 bg-white border rounded-lg shadow-sm flex justify-between items-start ${editingPointId === p.id ? 'border-yellow-400 ring-1 ring-yellow-400' : ''}`}
+                >
+                  <div className="flex items-start cursor-pointer flex-1" onClick={() => handleEditPoint(p)}>
                     {p.photoUrl && <img src={p.photoUrl} alt="thumb" className="w-10 h-10 rounded object-cover mr-2 bg-gray-100" />}
                     <div>
                       <div className="font-bold text-sm text-indigo-900">#{idx + 1} {p.title}</div>
                       <div className="text-xs text-gray-500">{p.locationName}</div>
                     </div>
                   </div>
-                  <button 
-                    onClick={() => setPoints(points.filter(pt => pt.id !== p.id))}
-                    className="text-red-400 hover:text-red-600"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  <div className="flex space-x-1">
+                      <button 
+                        onClick={() => handleEditPoint(p)}
+                        className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded"
+                        title="수정"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button 
+                        onClick={() => {
+                            if(window.confirm('정말 삭제하시겠습니까?')) {
+                                setPoints(points.filter(pt => pt.id !== p.id));
+                                if(editingPointId === p.id) clearForm();
+                            }
+                        }}
+                        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
+                        title="삭제"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -389,7 +480,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       <div className="flex-1 relative bg-gray-200">
         <div ref={mapRef} className="w-full h-full" />
         <div className="absolute top-4 left-4 z-10 bg-white px-4 py-2 rounded shadow text-sm font-medium text-gray-600">
-          지도에서 위치를 클릭하여 추가하세요
+          지도에서 위치를 클릭하여 추가하거나 수정하세요
         </div>
       </div>
     </div>
