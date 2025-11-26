@@ -266,6 +266,10 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
   };
 
   const handleSaveTrip = async () => {
+    if (!auth.currentUser) {
+        alert("로그인이 세션이 만료되었습니다. 다시 로그인해주세요.");
+        return;
+    }
     if (!tripTitle) return alert('여행 제목을 입력해주세요.');
     if (points.length < 2) return alert('최소 2개 이상의 지점을 등록해주세요.');
     
@@ -275,7 +279,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       const finalPoints = [...points].sort(robustSort).map((p, idx) => ({ ...p, order: idx }));
 
       const tripData = {
-        userId: auth.currentUser?.uid || 'anonymous',
+        userId: auth.currentUser.uid,
         title: tripTitle,
         points: finalPoints,
         createdAt: initialData ? initialData.createdAt : Date.now(),

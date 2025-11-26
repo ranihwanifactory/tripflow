@@ -1,9 +1,9 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { TripData, TransportType, Review, TripPoint } from '../types';
-import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send, Globe, Layers } from 'lucide-react';
+import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send, Globe, Layers, Trash2, Pencil, Check } from 'lucide-react';
 import { db, auth } from '../firebase';
-import { collection, addDoc, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, query, where, onSnapshot, deleteDoc, updateDoc, doc } from 'firebase/firestore';
 
 interface TripViewerProps {
   trip: TripData;
@@ -49,6 +49,56 @@ const robustSort = (a: TripPoint, b: TripPoint) => {
     return a.id.localeCompare(b.id);
 };
 
+// --- Curve Helper Functions ---
+
+// Calculate a point on a Quadratic Bezier Curve at t (0 to 1)
+const getQuadraticBezierPoint = (t: number, p0: any, p1: any, p2: any) => {
+    const x = (1 - t) * (1 - t) * p0.getLng() + 2 * (1 - t) * t * p1.getLng() + t * t * p2.getLng();
+    const y = (1 - t) * (1 - t) * p0.getLat() + 2 * (1 - t) * t * p1.getLat() + t * t * p2.getLat();
+    return new window.kakao.maps.LatLng(y, x);
+};
+
+// Calculate a control point to create a curve between start and end
+// curvature: 0.2 is a standard curve amount
+// direction: 1 or -1 to flip the curve side
+const getControlPoint = (start: any, end: any, curvature: number = 0.2, direction: number = 1) => {
+    const startLat = start.getLat();
+    const startLng = start.getLng();
+    const endLat = end.getLat();
+    const endLng = end.getLng();
+
+    // Midpoint
+    const midLat = (startLat + endLat) / 2;
+    const midLng = (startLng + endLng) / 2;
+
+    // Vector from start to end
+    const dLat = endLat - startLat;
+    const dLng = endLng - startLng;
+
+    // Perpendicular vector (Normal)
+    // For vector (dx, dy), perpendicular is (-dy, dx) or (dy, -dx)
+    // We adjust by latitude scale (approximate) to make it look right on map
+    const normalLat = -dLng;
+    const normalLng = dLat;
+
+    // Apply offset
+    const controlLat = midLat + normalLat * curvature * direction;
+    const controlLng = midLng + normalLng * curvature * direction;
+
+    return new window.kakao.maps.LatLng(controlLat, controlLng);
+};
+
+// Generate an array of points for the full curve (for static drawing)
+const generateCurvePath = (start: any, end: any, control: any, segments: number = 50) => {
+    const path = [];
+    for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        path.push(getQuadraticBezierPoint(t, start, control, end));
+    }
+    return path;
+};
+
+
 const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -66,20 +116,48 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   const [newComment, setNewComment] = useState('');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
-  // 0. Sort points chronologically to ensure correct path order regardless of saved order
+  // Edit Review State
+  const [editingReviewId, setEditingReviewId] = useState<string | null>(null);
+  const [editReviewText, setEditReviewText] = useState('');
+  const [editReviewRating, setEditReviewRating] = useState(5);
+
+  // 0. Sort points chronologically
   const sortedPoints = useMemo(() => {
     if (!trip || !trip.points) return [];
     return [...trip.points].sort(robustSort);
   }, [trip]);
 
-  // Memoize path points based on SORTED points
-  const pathPoints = useMemo(() => {
-    if (!window.kakao || !window.kakao.maps || sortedPoints.length === 0) return [];
-    return sortedPoints.map(p => ({
-      latlng: new window.kakao.maps.LatLng(p.lat, p.lng),
-      data: p
-    }));
+  // Memoize path segments (Start, End, Control Point, Full Curve Path)
+  const pathSegments = useMemo(() => {
+    if (!window.kakao || !window.kakao.maps || sortedPoints.length < 2) return [];
+
+    const segments = [];
+    for (let i = 0; i < sortedPoints.length - 1; i++) {
+        const start = new window.kakao.maps.LatLng(sortedPoints[i].lat, sortedPoints[i].lng);
+        const end = new window.kakao.maps.LatLng(sortedPoints[i+1].lat, sortedPoints[i+1].lng);
+        
+        // Alternate curve direction for S-shape flow
+        const direction = i % 2 === 0 ? 1 : -1;
+        const control = getControlPoint(start, end, 0.25, direction);
+        
+        const curvePath = generateCurvePath(start, end, control);
+        
+        segments.push({
+            start,
+            end,
+            control,
+            curvePath,
+            data: sortedPoints[i]
+        });
+    }
+    return segments;
   }, [sortedPoints]);
+
+  // Combined full path for background line
+  const fullBackgroundPath = useMemo(() => {
+      return pathSegments.flatMap(seg => seg.curvePath);
+  }, [pathSegments]);
+
 
   // Fetch Reviews
   useEffect(() => {
@@ -91,6 +169,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const fetchedReviews: Review[] = [];
         snapshot.forEach(doc => fetchedReviews.push({ id: doc.id, ...doc.data() } as Review));
+        // Sort client side
         fetchedReviews.sort((a, b) => b.createdAt - a.createdAt);
         setReviews(fetchedReviews);
     });
@@ -134,28 +213,69 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     }
   };
 
+  // Delete Review
+  const handleDeleteReview = async (reviewId: string) => {
+      if (!window.confirm("정말로 이 리뷰를 삭제하시겠습니까?")) return;
+      try {
+          await deleteDoc(doc(db, 'reviews', reviewId));
+      } catch (e) {
+          console.error("Error deleting review:", e);
+          alert("리뷰 삭제 중 오류가 발생했습니다.");
+      }
+  };
+
+  // Start Editing Review
+  const startEditing = (review: Review) => {
+      setEditingReviewId(review.id);
+      setEditReviewText(review.text);
+      setEditReviewRating(review.rating);
+  };
+
+  // Cancel Editing
+  const cancelEditing = () => {
+      setEditingReviewId(null);
+      setEditReviewText('');
+      setEditReviewRating(5);
+  };
+
+  // Update Review
+  const handleUpdateReview = async (reviewId: string) => {
+      if (!editReviewText.trim()) return alert("내용을 입력해주세요.");
+      try {
+          await updateDoc(doc(db, 'reviews', reviewId), {
+              text: editReviewText,
+              rating: editReviewRating
+          });
+          setEditingReviewId(null);
+      } catch (e) {
+          console.error("Error updating review:", e);
+          alert("리뷰 수정 중 오류가 발생했습니다.");
+      }
+  };
+
   // Toggle Map Type
   const toggleMapType = () => {
-    if (!map || !window.kakao) return;
-    const nextType = mapType === 'ROADMAP' ? 'HYBRID' : 'ROADMAP';
-    setMapType(nextType);
-    map.setMapTypeId(window.kakao.maps.MapTypeId[nextType]);
+    // Just toggle state, let useEffect handle the map update
+    setMapType(prev => prev === 'ROADMAP' ? 'HYBRID' : 'ROADMAP');
   };
 
   // 1. Initialize Map
   useEffect(() => {
-    if (!mapRef.current || pathPoints.length === 0) return;
+    if (!mapRef.current || sortedPoints.length === 0) return;
 
-    // Clear previous map if exists to avoid duplication
+    // Clear previous map
     mapRef.current.innerHTML = '';
 
+    const startPos = new window.kakao.maps.LatLng(sortedPoints[0].lat, sortedPoints[0].lng);
+
     const options = {
-      center: pathPoints[0].latlng,
+      center: startPos,
       level: 9, 
       draggable: false, 
       zoomable: false,
       scrollwheel: false,
       disableDoubleClickZoom: true,
+      // Use current mapType for initial render
       mapTypeId: mapType === 'HYBRID' ? window.kakao.maps.MapTypeId.HYBRID : window.kakao.maps.MapTypeId.ROADMAP
     };
     const newMap = new window.kakao.maps.Map(mapRef.current, options);
@@ -169,22 +289,22 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
     setTimeout(() => {
         newMap.relayout();
-        newMap.setCenter(pathPoints[0].latlng);
+        newMap.setCenter(startPos);
     }, 500);
 
-    const path = pathPoints.map(p => p.latlng);
-    
-    // Background Line
-    const backgroundPolyline = new window.kakao.maps.Polyline({
-      path: path,
-      strokeWeight: 6,
-      strokeColor: '#FFFFFF',
-      strokeOpacity: 0.3,
-      strokeStyle: 'solid'
-    });
-    backgroundPolyline.setMap(newMap);
+    // Draw Background Curved Line
+    if (fullBackgroundPath.length > 0) {
+        const backgroundPolyline = new window.kakao.maps.Polyline({
+          path: fullBackgroundPath,
+          strokeWeight: 6,
+          strokeColor: '#FFFFFF',
+          strokeOpacity: 0.3,
+          strokeStyle: 'solid'
+        });
+        backgroundPolyline.setMap(newMap);
+    }
 
-    // Active Line (Red)
+    // Initialize Active Line (Red)
     const activePolyline = new window.kakao.maps.Polyline({
         path: [],
         strokeWeight: 6,
@@ -195,8 +315,9 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     activePolyline.setMap(newMap);
     setTraveledPolyline(activePolyline);
 
-    // Add Checkpoint Markers with NUMBER
-    pathPoints.forEach((p, index) => {
+    // Add Checkpoint Markers
+    sortedPoints.forEach((p, index) => {
+      const pos = new window.kakao.maps.LatLng(p.lat, p.lng);
       const markerContent = document.createElement('div');
       markerContent.innerHTML = `
         <div style="
@@ -215,7 +336,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         ">${index + 1}</div>
       `;
       const customOverlay = new window.kakao.maps.CustomOverlay({
-        position: p.latlng,
+        position: pos,
         content: markerContent,
         yAnchor: 0.5,
         zIndex: 10
@@ -230,7 +351,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     transportContent.innerText = getTransportIcon(sortedPoints[0].transportToNext);
 
     const overlay = new window.kakao.maps.CustomOverlay({
-      position: pathPoints[0].latlng,
+      position: startPos,
       content: transportContent,
       zIndex: 100
     });
@@ -241,12 +362,19 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         resizeObserver.disconnect();
     };
 
-  }, [pathPoints, sortedPoints, trip, mapType]);
+  }, [fullBackgroundPath, sortedPoints]); // Removed mapType from dependency to prevent reset
 
-  // 2. Handle Scroll Logic
+  // 1.5 Handle Map Type Change separately
+  useEffect(() => {
+     if (!map || !window.kakao) return;
+     const typeId = mapType === 'HYBRID' ? window.kakao.maps.MapTypeId.HYBRID : window.kakao.maps.MapTypeId.ROADMAP;
+     map.setMapTypeId(typeId);
+  }, [map, mapType]);
+
+  // 2. Handle Scroll Logic (Curved Movement)
   useEffect(() => {
     const handleScroll = () => {
-      if (!scrollContainerRef.current || !map || !transportOverlay || !traveledPolyline || pathPoints.length < 2) return;
+      if (!scrollContainerRef.current || !map || !transportOverlay || !traveledPolyline || pathSegments.length === 0) return;
 
       const container = scrollContainerRef.current;
       const scrollTop = container.scrollTop;
@@ -256,47 +384,52 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       const sectionHeight = vh * SCROLL_HEIGHT_MULTIPLIER;
       
       const relativeScroll = Math.max(0, scrollTop - scrollStart);
-      const totalIndex = pathPoints.length;
+      const totalPoints = sortedPoints.length;
       
+      // Calculate which segment we are in
       const currentSectionIndex = Math.floor(relativeScroll / sectionHeight);
       const sectionProgress = (relativeScroll % sectionHeight) / sectionHeight;
       
-      let mapProgress = relativeScroll / sectionHeight;
+      // Clamp index to valid segments
+      const safeIndex = Math.min(currentSectionIndex, pathSegments.length - 1);
       
-      if (mapProgress < 0) mapProgress = 0;
-      if (mapProgress > totalIndex - 1) mapProgress = totalIndex - 1;
+      // Map Logic
+      if (safeIndex >= 0 && safeIndex < pathSegments.length) {
+          const segment = pathSegments[safeIndex];
+          
+          // Calculate position on the CURVE
+          const currentPos = getQuadraticBezierPoint(sectionProgress, segment.start, segment.control, segment.end);
+          
+          transportOverlay.setPosition(currentPos);
+          map.panTo(currentPos);
 
-      // Move Marker
-      const currentIndex = Math.floor(mapProgress);
-      const currentSegmentProgress = mapProgress - currentIndex;
-
-      if (currentIndex < pathPoints.length - 1) {
-        const start = pathPoints[currentIndex].latlng;
-        const end = pathPoints[currentIndex + 1].latlng;
-        
-        const currentLat = start.getLat() + (end.getLat() - start.getLat()) * currentSegmentProgress;
-        const currentLng = start.getLng() + (end.getLng() - start.getLng()) * currentSegmentProgress;
-        const currentPos = new window.kakao.maps.LatLng(currentLat, currentLng);
-
-        transportOverlay.setPosition(currentPos);
-        map.panTo(currentPos);
-        
-        const iconDiv = transportOverlay.getContent();
-        if(iconDiv && currentIndex < sortedPoints.length) {
-          const transportMode = sortedPoints[currentIndex].transportToNext;
-          const iconChar = getTransportIcon(transportMode);
-          if (iconDiv.innerText !== iconChar) {
-              iconDiv.innerText = iconChar;
+          // Update Icon
+          const iconDiv = transportOverlay.getContent();
+          if(iconDiv) {
+              const transportMode = segment.data.transportToNext;
+              const iconChar = getTransportIcon(transportMode);
+              if (iconDiv.innerText !== iconChar) {
+                  iconDiv.innerText = iconChar;
+              }
           }
-        }
 
-        const traveledPath = pathPoints.slice(0, currentIndex + 1).map(p => p.latlng);
-        traveledPath.push(currentPos); 
-        traveledPolyline.setPath(traveledPath);
+          // Update Red Path (History + Current Segment Partial)
+          // 1. All fully completed segments
+          const historyPath = pathSegments.slice(0, safeIndex).flatMap(s => s.curvePath);
+          
+          // 2. Current partial segment (generate curve up to progress t)
+          const currentPartialPath = generateCurvePath(segment.start, segment.end, segment.control, Math.floor(sectionProgress * 50));
+          
+          traveledPolyline.setPath([...historyPath, ...currentPartialPath]);
 
-      } else {
-        const fullPath = pathPoints.map(p => p.latlng);
-        traveledPolyline.setPath(fullPath);
+      } else if (currentSectionIndex >= pathSegments.length) {
+          // At the end
+          const lastPoint = sortedPoints[sortedPoints.length - 1];
+          const pos = new window.kakao.maps.LatLng(lastPoint.lat, lastPoint.lng);
+          transportOverlay.setPosition(pos);
+          
+          // Full path
+          traveledPolyline.setPath(fullBackgroundPath);
       }
 
       // Card Animation
@@ -349,7 +482,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         container.removeEventListener('scroll', handleScroll);
       }
     };
-  }, [map, transportOverlay, traveledPolyline, pathPoints, sortedPoints]);
+  }, [map, transportOverlay, traveledPolyline, pathSegments, fullBackgroundPath, sortedPoints]);
 
 
   return (
@@ -560,7 +693,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                         <p className="text-center text-white/50 py-4 text-xs">아직 작성된 리뷰가 없습니다.</p>
                     ) : (
                         reviews.map((review) => (
-                            <div key={review.id} className="bg-black/40 p-3 rounded-lg border border-white/5">
+                            <div key={review.id} className="bg-black/40 p-3 rounded-lg border border-white/5 relative group">
                                 <div className="flex justify-between items-start mb-1">
                                     <div className="flex items-center">
                                         <div className="w-6 h-6 rounded-full bg-indigo-500 flex items-center justify-center text-xs font-bold mr-2 overflow-hidden border border-white/20">
@@ -568,14 +701,66 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                         </div>
                                         <div>
                                             <div className="font-bold text-xs text-white">{review.userName}</div>
-                                            <div className="flex items-center text-yellow-400">
-                                                {[...Array(review.rating)].map((_, i) => <Star key={i} size={8} fill="currentColor" />)}
-                                            </div>
+                                            {editingReviewId === review.id ? (
+                                                <div className="flex items-center space-x-1 mt-1">
+                                                     {[1, 2, 3, 4, 5].map((star) => (
+                                                        <button key={star} onClick={() => setEditReviewRating(star)} className="focus:outline-none">
+                                                            <Star size={10} className={star <= editReviewRating ? "text-yellow-400" : "text-gray-600"} fill={star <= editReviewRating ? "currentColor" : "currentColor"}/>
+                                                        </button>
+                                                     ))}
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center text-yellow-400">
+                                                    {[...Array(review.rating)].map((_, i) => <Star key={i} size={8} fill="currentColor" />)}
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                     <span className="text-[10px] text-white/40">{new Date(review.createdAt).toLocaleDateString()}</span>
                                 </div>
-                                <p className="text-white/80 text-xs ml-8 leading-snug">{review.text}</p>
+
+                                {/* Edit Mode vs View Mode */}
+                                {editingReviewId === review.id ? (
+                                    <div className="mt-2">
+                                        <input 
+                                            type="text" 
+                                            value={editReviewText}
+                                            onChange={(e) => setEditReviewText(e.target.value)}
+                                            className="w-full bg-white/10 text-white text-xs p-2 rounded mb-2 border border-white/20 focus:outline-none"
+                                            autoFocus
+                                        />
+                                        <div className="flex justify-end gap-2">
+                                            <button onClick={cancelEditing} className="p-1 text-gray-400 hover:text-white rounded bg-white/10">
+                                                <X size={12} />
+                                            </button>
+                                            <button onClick={() => handleUpdateReview(review.id)} className="p-1 text-green-400 hover:text-green-300 rounded bg-green-500/20 border border-green-500/30">
+                                                <Check size={12} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <p className="text-white/80 text-xs ml-8 leading-snug">{review.text}</p>
+                                )}
+
+                                {/* Owner Controls */}
+                                {auth.currentUser?.uid === review.userId && editingReviewId !== review.id && (
+                                    <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button 
+                                            onClick={() => startEditing(review)}
+                                            className="p-1 text-gray-400 hover:text-indigo-400 bg-black/50 rounded"
+                                            title="수정"
+                                        >
+                                            <Pencil size={10} />
+                                        </button>
+                                        <button 
+                                            onClick={() => handleDeleteReview(review.id)}
+                                            className="p-1 text-gray-400 hover:text-red-400 bg-black/50 rounded"
+                                            title="삭제"
+                                        >
+                                            <Trash2 size={10} />
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         ))
                     )}
