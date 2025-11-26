@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { TripData, TransportType, Review } from '../types';
 import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send, Globe, Layers } from 'lucide-react';
@@ -40,8 +41,12 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
+  
   const [map, setMap] = useState<any>(null);
   const [transportOverlay, setTransportOverlay] = useState<any>(null);
+  // Separate polylines: one for the full static path, one for the dynamic traveled path
+  const [traveledPolyline, setTraveledPolyline] = useState<any>(null);
+  
   const [mapType, setMapType] = useState<'ROADMAP' | 'HYBRID'>('ROADMAP');
 
   // Review State
@@ -138,22 +143,35 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     setMap(newMap);
 
     const path = pathPoints.map(p => p.latlng);
-    const polyline = new window.kakao.maps.Polyline({
+    
+    // Background Line (Total Path) - Faint Color
+    const backgroundPolyline = new window.kakao.maps.Polyline({
       path: path,
       strokeWeight: 6,
-      strokeColor: '#FFFFFF', 
-      strokeOpacity: 0.8,
+      strokeColor: '#FFFFFF', // White/Grey for the full path
+      strokeOpacity: 0.3,     // Very transparent
       strokeStyle: 'solid'
     });
-    polyline.setMap(newMap);
+    backgroundPolyline.setMap(newMap);
+
+    // Active Line (Traveled Path) - Red Color, initially empty
+    const activePolyline = new window.kakao.maps.Polyline({
+        path: [],
+        strokeWeight: 6,
+        strokeColor: '#EF4444', // Red color for traveled path
+        strokeOpacity: 1,
+        strokeStyle: 'solid'
+    });
+    activePolyline.setMap(newMap);
+    setTraveledPolyline(activePolyline);
 
     // Add Checkpoint Markers
     pathPoints.forEach((p, index) => {
       const markerContent = document.createElement('div');
       markerContent.innerHTML = `
         <div style="
-          width: 12px; 
-          height: 12px; 
+          width: 10px; 
+          height: 10px; 
           background: white; 
           border-radius: 50%; 
           box-shadow: 0 0 8px rgba(255,255,255,0.8);
@@ -171,7 +189,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
     // Transport/Vehicle Marker
     const transportContent = document.createElement('div');
-    transportContent.className = 'transport-icon text-4xl filter drop-shadow-2xl transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2';
+    transportContent.className = 'transport-icon text-3xl filter drop-shadow-2xl transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2';
     transportContent.style.textShadow = '0 4px 8px rgba(0,0,0,0.5)';
     transportContent.innerText = getTransportIcon(trip.points[0].transportToNext);
 
@@ -183,12 +201,12 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     overlay.setMap(newMap);
     setTransportOverlay(overlay);
 
-  }, [pathPoints, trip]); // Re-init if trip changes (Map type toggle handled separately via state/button)
+  }, [pathPoints, trip]);
 
-  // 2. Handle Scroll Logic (Sticky & Animation)
+  // 2. Handle Scroll Logic (Sticky & Animation & Dynamic Polyline)
   useEffect(() => {
     const handleScroll = () => {
-      if (!scrollContainerRef.current || !map || !transportOverlay || pathPoints.length < 2) return;
+      if (!scrollContainerRef.current || !map || !transportOverlay || !traveledPolyline || pathPoints.length < 2) return;
 
       const container = scrollContainerRef.current;
       const scrollTop = container.scrollTop;
@@ -208,7 +226,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       if (mapProgress < 0) mapProgress = 0;
       if (mapProgress > totalIndex - 1) mapProgress = totalIndex - 1;
 
-      // Move Marker
+      // Move Marker & Update Polyline
       const currentIndex = Math.floor(mapProgress);
       const currentSegmentProgress = mapProgress - currentIndex;
 
@@ -220,9 +238,11 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         const currentLng = start.getLng() + (end.getLng() - start.getLng()) * currentSegmentProgress;
         const currentPos = new window.kakao.maps.LatLng(currentLat, currentLng);
 
+        // Update Marker Position
         transportOverlay.setPosition(currentPos);
         map.panTo(currentPos);
         
+        // Update Transport Icon
         const iconDiv = transportOverlay.getContent();
         if(iconDiv) {
           const nextTransport = trip.points[currentIndex].transportToNext;
@@ -230,6 +250,16 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
               iconDiv.innerText = getTransportIcon(nextTransport);
           }
         }
+
+        // Draw Red Polyline (Traveled path)
+        const traveledPath = pathPoints.slice(0, currentIndex + 1).map(p => p.latlng);
+        traveledPath.push(currentPos); // Add current interpolated position
+        traveledPolyline.setPath(traveledPath);
+
+      } else {
+        // At the very end
+        const fullPath = pathPoints.map(p => p.latlng);
+        traveledPolyline.setPath(fullPath);
       }
 
       // Card Animation
@@ -282,20 +312,18 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         container.removeEventListener('scroll', handleScroll);
       }
     };
-  }, [map, transportOverlay, pathPoints, trip]);
+  }, [map, transportOverlay, traveledPolyline, pathPoints, trip]);
 
 
   return (
     <div className="fixed inset-0 z-50 bg-black font-sans">
       
       {/* 1. Background Map Layer */}
-      {/* We use a black container and set map opacity to create a dark background effect */}
       <div className="fixed inset-0 z-0 bg-black">
         <div 
             ref={mapRef} 
             className={`w-full h-full transition-all duration-700 ${mapType === 'HYBRID' ? 'opacity-70' : 'opacity-40 grayscale-[30%] contrast-125'}`} 
         />
-        {/* Additional gradient overlay for better text readability */}
         <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/80 pointer-events-none" />
       </div>
 
@@ -328,7 +356,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
             <span className="inline-block px-4 py-1 rounded-full border border-white/30 bg-black/30 backdrop-blur-sm text-sm font-light mb-6 tracking-widest uppercase">
               TripFlow Journey
             </span>
-            <h1 className="text-5xl md:text-7xl font-bold mb-6 leading-tight drop-shadow-2xl">
+            <h1 className="text-4xl md:text-6xl font-bold mb-6 leading-tight drop-shadow-2xl">
               {trip.title}
             </h1>
             <div className="flex items-center justify-center space-x-6 text-white/80 text-sm md:text-base font-light tracking-wide">
@@ -354,15 +382,16 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                 style={{ height: `${SCROLL_HEIGHT_MULTIPLIER * 100}vh` }}
                 className="w-full relative"
             >
-                {/* Connecting Line Visual */}
                 <div className="absolute top-0 bottom-0 left-1/2 w-px bg-gradient-to-b from-white/0 via-white/10 to-white/0 transform -translate-x-1/2" />
 
-                <div className="sticky top-0 h-screen w-full flex items-center justify-center p-4 md:p-8 overflow-hidden">
+                <div className="sticky top-0 h-screen w-full flex items-center justify-center p-4 overflow-hidden">
                     <div 
                         ref={el => cardRefs.current[idx] = el}
-                        className="w-full max-w-2xl bg-black/80 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden border border-white/10 transform will-change-transform opacity-0"
+                        // Reduced max-width (max-w-md) and overall sizes
+                        className="w-full max-w-md bg-black/85 backdrop-blur-xl rounded-2xl shadow-2xl overflow-hidden border border-white/10 transform will-change-transform opacity-0"
                     >
-                        <div className="relative h-56 md:h-72 overflow-hidden group">
+                        {/* Reduced image height */}
+                        <div className="relative h-48 md:h-56 overflow-hidden group">
                             <img 
                                 src={point.photoUrl} 
                                 alt={point.title} 
@@ -370,53 +399,53 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                             />
                             <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
                             
-                            <div className="absolute top-4 left-4">
-                                <span className="bg-black/50 backdrop-blur-md text-white px-3 py-1 rounded-full text-xs font-bold border border-white/10 shadow-lg">
-                                    #{idx + 1} CHECKPOINT
+                            <div className="absolute top-3 left-3">
+                                <span className="bg-black/50 backdrop-blur-md text-white px-2 py-0.5 rounded-full text-[10px] font-bold border border-white/10 shadow-lg">
+                                    #{idx + 1}
                                 </span>
                             </div>
 
-                            <div className="absolute bottom-0 left-0 p-6 text-white w-full">
-                                <div className="flex items-center text-xs font-medium tracking-wider uppercase mb-1 text-indigo-300">
-                                    <Clock size={12} className="mr-1" />
+                            <div className="absolute bottom-0 left-0 p-5 text-white w-full">
+                                <div className="flex items-center text-[10px] font-medium tracking-wider uppercase mb-1 text-indigo-300">
+                                    <Clock size={10} className="mr-1" />
                                     {point.date.replace('T', ' ')}
                                 </div>
-                                <h2 className="text-2xl md:text-3xl font-bold leading-tight text-white drop-shadow-md">{point.title}</h2>
+                                <h2 className="text-xl md:text-2xl font-bold leading-tight text-white drop-shadow-md truncate">{point.title}</h2>
                             </div>
                         </div>
 
-                        <div className="p-6 md:p-8 text-gray-200">
-                            <div className="flex items-start mb-6">
-                                <div className="bg-indigo-500/20 p-2 rounded-full mr-4 text-indigo-400 shrink-0 border border-indigo-500/30">
-                                    <MapPin size={20} />
+                        <div className="p-5 text-gray-200">
+                            <div className="flex items-start mb-4">
+                                <div className="bg-indigo-500/20 p-1.5 rounded-full mr-3 text-indigo-400 shrink-0 border border-indigo-500/30">
+                                    <MapPin size={16} />
                                 </div>
                                 <div>
-                                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Location</h3>
-                                    <p className="text-lg font-bold text-white leading-none mb-1">{point.locationName}</p>
-                                    <p className="text-sm text-gray-400">{point.address}</p>
+                                    <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-0.5">Location</h3>
+                                    <p className="text-base font-bold text-white leading-none mb-0.5">{point.locationName}</p>
+                                    <p className="text-xs text-gray-400 truncate max-w-[200px]">{point.address}</p>
                                 </div>
                             </div>
 
-                            <div className="prose prose-invert max-w-none mb-6">
-                                <p className="text-gray-300 leading-relaxed text-base md:text-lg whitespace-pre-line line-clamp-4 md:line-clamp-none">
+                            <div className="prose prose-invert max-w-none mb-4">
+                                <p className="text-gray-300 leading-relaxed text-sm md:text-base whitespace-pre-line line-clamp-4">
                                     {point.description}
                                 </p>
                             </div>
 
                             {idx < trip.points.length - 1 && (
-                                <div className="border-t border-white/10 pt-4 flex items-center justify-between">
-                                    <div className="flex items-center text-gray-500 text-sm font-medium">
-                                        <Navigation size={16} className="mr-2" />
-                                        <span>Next Destination</span>
+                                <div className="border-t border-white/10 pt-3 flex items-center justify-between">
+                                    <div className="flex items-center text-gray-500 text-xs font-medium">
+                                        <Navigation size={12} className="mr-1" />
+                                        <span>Next</span>
                                     </div>
-                                    <div className="flex items-center bg-indigo-900/30 text-indigo-300 px-3 py-1.5 rounded-full text-sm font-bold border border-indigo-500/30">
-                                        <span className="mr-2">{getTransportIcon(point.transportToNext)}</span>
+                                    <div className="flex items-center bg-indigo-900/30 text-indigo-300 px-2 py-1 rounded-full text-xs font-bold border border-indigo-500/30">
+                                        <span className="mr-1">{getTransportIcon(point.transportToNext)}</span>
                                         <span>{getTransportLabel(point.transportToNext)}</span>
                                     </div>
                                 </div>
                             )}
                              {idx === trip.points.length - 1 && (
-                                 <div className="border-t border-white/10 pt-4 flex items-center justify-center text-indigo-400 font-bold">
+                                 <div className="border-t border-white/10 pt-3 flex items-center justify-center text-indigo-400 font-bold text-sm">
                                     🏁 여행 종료
                                  </div>
                             )}
@@ -427,42 +456,43 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
             ))}
         </div>
 
-        {/* Outro Section */}
-        <div className="h-[80vh] flex flex-col justify-center items-center text-white p-8 bg-gradient-to-t from-black via-black/90 to-transparent relative z-20">
-            <h2 className="text-4xl font-bold mb-6 drop-shadow-lg">End of Journey</h2>
-            <div className="flex space-x-4 mb-12">
+        {/* Outro & Review Section */}
+        <div className="min-h-screen flex flex-col justify-start items-center text-white p-4 pt-20 bg-gradient-to-t from-black via-black/90 to-transparent relative z-20 pb-20">
+            <h2 className="text-3xl font-bold mb-4 drop-shadow-lg">End of Journey</h2>
+            
+            <div className="flex space-x-3 mb-10">
                 <button 
                     onClick={() => {
                         if(scrollContainerRef.current) scrollContainerRef.current.scrollTo({top: 0, behavior: 'smooth'});
                     }}
-                    className="px-6 py-3 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white rounded-full font-semibold transition border border-white/30"
+                    className="px-5 py-2 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white rounded-full text-sm font-semibold transition border border-white/30"
                 >
                     다시 보기
                 </button>
                 <button 
                     onClick={onClose}
-                    className="px-8 py-3 bg-white text-black rounded-full font-bold hover:bg-gray-200 transition shadow-xl"
+                    className="px-6 py-2 bg-white text-black rounded-full text-sm font-bold hover:bg-gray-200 transition shadow-xl"
                 >
                     지도 닫기
                 </button>
             </div>
 
-             {/* Review & Ratings Section */}
-            <div className="w-full max-w-3xl bg-white/5 backdrop-blur-xl rounded-3xl p-8 border border-white/10">
-                <h3 className="text-2xl font-bold mb-6 flex items-center">
-                    <Star className="text-yellow-400 mr-2" fill="currentColor" /> 
-                    여행자 리뷰 <span className="text-sm font-normal text-white/60 ml-2">({reviews.length})</span>
+             {/* Review & Ratings Section - Compact Size */}
+            <div className="w-full max-w-md bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10">
+                <h3 className="text-xl font-bold mb-4 flex items-center">
+                    <Star className="text-yellow-400 mr-2" fill="currentColor" size={20} /> 
+                    여행자 리뷰 <span className="text-xs font-normal text-white/60 ml-2">({reviews.length})</span>
                 </h3>
 
                 {/* Write Review */}
-                <div className="mb-8 p-6 bg-white/5 rounded-2xl border border-white/5">
-                    <div className="flex items-center mb-4">
-                        <span className="mr-3 font-medium text-white/90">이 여행 어떠셨나요?</span>
+                <div className="mb-6 p-4 bg-white/5 rounded-xl border border-white/5">
+                    <div className="flex items-center justify-between mb-3">
+                        <span className="font-medium text-white/90 text-sm">별점 남기기</span>
                         <div className="flex space-x-1">
                             {[1, 2, 3, 4, 5].map((star) => (
                                 <button key={star} onClick={() => setNewRating(star)} className="focus:outline-none transition-transform hover:scale-110">
                                     <Star 
-                                        size={24} 
+                                        size={20} 
                                         className={star <= newRating ? "text-yellow-400" : "text-gray-600"} 
                                         fill={star <= newRating ? "currentColor" : "currentColor"}
                                     />
@@ -475,42 +505,42 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                             type="text" 
                             value={newComment}
                             onChange={(e) => setNewComment(e.target.value)}
-                            placeholder="여행에 대한 감상평을 남겨주세요..."
-                            className="flex-1 bg-white/10 border-transparent focus:border-indigo-500 focus:bg-white/20 text-white placeholder-gray-400 rounded-lg px-4 py-2 transition outline-none"
+                            placeholder="감상평을 남겨주세요..."
+                            className="flex-1 bg-white/10 border-transparent focus:border-indigo-500 focus:bg-white/20 text-white placeholder-gray-400 rounded-lg px-3 py-2 text-sm transition outline-none"
                             onKeyDown={(e) => e.key === 'Enter' && handleSubmitReview()}
                         />
                         <button 
                             onClick={handleSubmitReview}
                             disabled={isSubmittingReview}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-6 py-2 font-bold disabled:opacity-50 transition"
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-2 font-bold disabled:opacity-50 transition"
                         >
-                            <Send size={18} />
+                            <Send size={16} />
                         </button>
                     </div>
                 </div>
 
                 {/* Review List */}
-                <div className="space-y-4 max-h-[400px] overflow-y-auto no-scrollbar pr-2">
+                <div className="space-y-3 max-h-[300px] overflow-y-auto no-scrollbar pr-1">
                     {reviews.length === 0 ? (
-                        <p className="text-center text-white/50 py-4">아직 작성된 리뷰가 없습니다. 첫 번째 리뷰를 남겨보세요!</p>
+                        <p className="text-center text-white/50 py-4 text-xs">아직 작성된 리뷰가 없습니다.</p>
                     ) : (
                         reviews.map((review) => (
-                            <div key={review.id} className="bg-black/40 p-4 rounded-xl border border-white/5">
-                                <div className="flex justify-between items-start mb-2">
+                            <div key={review.id} className="bg-black/40 p-3 rounded-lg border border-white/5">
+                                <div className="flex justify-between items-start mb-1">
                                     <div className="flex items-center">
-                                        <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-sm font-bold mr-3 overflow-hidden border border-white/20">
+                                        <div className="w-6 h-6 rounded-full bg-indigo-500 flex items-center justify-center text-xs font-bold mr-2 overflow-hidden border border-white/20">
                                             {review.userPhoto ? <img src={review.userPhoto} alt="user" className="w-full h-full object-cover"/> : review.userName[0]}
                                         </div>
                                         <div>
-                                            <div className="font-bold text-sm text-white">{review.userName}</div>
-                                            <div className="flex items-center text-xs text-yellow-400">
-                                                {[...Array(review.rating)].map((_, i) => <Star key={i} size={10} fill="currentColor" />)}
+                                            <div className="font-bold text-xs text-white">{review.userName}</div>
+                                            <div className="flex items-center text-yellow-400">
+                                                {[...Array(review.rating)].map((_, i) => <Star key={i} size={8} fill="currentColor" />)}
                                             </div>
                                         </div>
                                     </div>
-                                    <span className="text-xs text-white/40">{new Date(review.createdAt).toLocaleDateString()}</span>
+                                    <span className="text-[10px] text-white/40">{new Date(review.createdAt).toLocaleDateString()}</span>
                                 </div>
-                                <p className="text-white/80 text-sm ml-11">{review.text}</p>
+                                <p className="text-white/80 text-xs ml-8 leading-snug">{review.text}</p>
                             </div>
                         ))
                     )}
