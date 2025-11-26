@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { TripData, TransportType, Review } from '../types';
-import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send } from 'lucide-react';
+import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send, Globe, Layers } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, addDoc, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 
@@ -9,7 +9,7 @@ interface TripViewerProps {
   onClose: () => void;
 }
 
-// Reduced multiplier to 1.2 for immediate snappy scrolling
+// Reduced multiplier for immediate snappy scrolling
 const SCROLL_HEIGHT_MULTIPLIER = 1.2;
 
 const getTransportIcon = (type: TransportType) => {
@@ -42,6 +42,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [map, setMap] = useState<any>(null);
   const [transportOverlay, setTransportOverlay] = useState<any>(null);
+  const [mapType, setMapType] = useState<'ROADMAP' | 'HYBRID'>('ROADMAP');
 
   // Review State
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -76,9 +77,16 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
   // Submit Review
   const handleSubmitReview = async () => {
-    if(!trip.id || !newComment.trim()) return;
-    if(!auth.currentUser) {
-        alert("로그인이 필요합니다.");
+    if (!auth.currentUser) {
+        alert("로그인이 필요한 기능입니다.");
+        return;
+    }
+    if (!trip.id) {
+        alert("여행 정보 오류: ID를 찾을 수 없습니다.");
+        return;
+    }
+    if (!newComment.trim()) {
+        alert("리뷰 내용을 입력해주세요.");
         return;
     }
     
@@ -95,25 +103,36 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         });
         setNewComment('');
         setNewRating(5);
-    } catch (e) {
-        console.error(e);
-        alert('리뷰 작성 중 오류가 발생했습니다.');
+        alert("리뷰가 성공적으로 등록되었습니다!");
+    } catch (e: any) {
+        console.error("Error submitting review:", e);
+        alert(`리뷰 작성 중 오류가 발생했습니다: ${e.message}`);
     } finally {
         setIsSubmittingReview(false);
     }
+  };
+
+  // Toggle Map Type
+  const toggleMapType = () => {
+    if (!map || !window.kakao) return;
+    const nextType = mapType === 'ROADMAP' ? 'HYBRID' : 'ROADMAP';
+    setMapType(nextType);
+    map.setMapTypeId(window.kakao.maps.MapTypeId[nextType]);
   };
 
   // 1. Initialize Map
   useEffect(() => {
     if (!mapRef.current || pathPoints.length === 0) return;
 
+    // Use Level 9 for "Vehicle moving" feel (Zoomed out)
     const options = {
       center: pathPoints[0].latlng,
-      level: 5,
+      level: 9, 
       draggable: false, 
       zoomable: false,
       scrollwheel: false,
-      disableDoubleClickZoom: true
+      disableDoubleClickZoom: true,
+      mapTypeId: mapType === 'HYBRID' ? window.kakao.maps.MapTypeId.HYBRID : window.kakao.maps.MapTypeId.ROADMAP
     };
     const newMap = new window.kakao.maps.Map(mapRef.current, options);
     setMap(newMap);
@@ -121,23 +140,24 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     const path = pathPoints.map(p => p.latlng);
     const polyline = new window.kakao.maps.Polyline({
       path: path,
-      strokeWeight: 8,
+      strokeWeight: 6,
       strokeColor: '#FFFFFF', 
-      strokeOpacity: 0.6,
+      strokeOpacity: 0.8,
       strokeStyle: 'solid'
     });
     polyline.setMap(newMap);
 
+    // Add Checkpoint Markers
     pathPoints.forEach((p, index) => {
       const markerContent = document.createElement('div');
       markerContent.innerHTML = `
         <div style="
-          width: 14px; 
-          height: 14px; 
+          width: 12px; 
+          height: 12px; 
           background: white; 
           border-radius: 50%; 
-          box-shadow: 0 0 10px rgba(255,255,255,0.9);
-          border: 3px solid #4F46E5;
+          box-shadow: 0 0 8px rgba(255,255,255,0.8);
+          border: 2px solid #4F46E5;
         "></div>
       `;
       const customOverlay = new window.kakao.maps.CustomOverlay({
@@ -149,8 +169,9 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       customOverlay.setMap(newMap);
     });
 
+    // Transport/Vehicle Marker
     const transportContent = document.createElement('div');
-    transportContent.className = 'transport-icon text-5xl filter drop-shadow-2xl transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2';
+    transportContent.className = 'transport-icon text-4xl filter drop-shadow-2xl transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2';
     transportContent.style.textShadow = '0 4px 8px rgba(0,0,0,0.5)';
     transportContent.innerText = getTransportIcon(trip.points[0].transportToNext);
 
@@ -162,7 +183,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     overlay.setMap(newMap);
     setTransportOverlay(overlay);
 
-  }, [pathPoints, trip]);
+  }, [pathPoints, trip]); // Re-init if trip changes (Map type toggle handled separately via state/button)
 
   // 2. Handle Scroll Logic (Sticky & Animation)
   useEffect(() => {
@@ -173,32 +194,17 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       const scrollTop = container.scrollTop;
       const vh = window.innerHeight;
 
-      // Calculate progress relative to the content sections
-      // Hero section is 100vh
       const scrollStart = vh;
       const sectionHeight = vh * SCROLL_HEIGHT_MULTIPLIER;
       
-      // Calculate active section
       const relativeScroll = Math.max(0, scrollTop - scrollStart);
       const totalIndex = pathPoints.length;
-      
-      // Calculate continuous map progress
-      // We want the map to travel smoothly across the entire journey
-      // Total travel distance in pixels = sectionHeight * (totalIndex - 1)
-      // But we also want the map to move WHILE the user is reading/scrolling a card
       
       const currentSectionIndex = Math.floor(relativeScroll / sectionHeight);
       const sectionProgress = (relativeScroll % sectionHeight) / sectionHeight;
       
-      // Map Movement Logic
-      // We map the scroll to the points index.
-      // To make it smoother, we map the entire scrollable area to the path length.
-      
-      // Effective scrollable height for map travel
-      // We start moving immediately from the first card
       let mapProgress = relativeScroll / sectionHeight;
       
-      // Clamp map progress
       if (mapProgress < 0) mapProgress = 0;
       if (mapProgress > totalIndex - 1) mapProgress = totalIndex - 1;
 
@@ -226,32 +232,19 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         }
       }
 
-      // Card Animation Logic (Direct DOM Manipulation for Performance)
+      // Card Animation
       trip.points.forEach((_, idx) => {
         const card = cardRefs.current[idx];
         if (!card) return;
 
-        // Calculate visibility for each card based on its specific section
-        // A section is [idx * sectionHeight, (idx + 1) * sectionHeight] relative to scrollStart
-        
-        // Let's define the "Active Window" for a card relative to the viewport
-        // Since we are using Sticky, the card container is fixed at top.
-        // We simulate scrolling by translating the inner card.
-        
-        // Progress 0.0 -> Enter
-        // Progress 0.1 -> Fully Visible
-        // Progress 0.85 -> Start Exit
-        // Progress 1.0 -> Fully Exited (moved up)
-        
         let localProgress = 0;
         
-        // If we are in the section for this card
         if (currentSectionIndex === idx) {
              localProgress = sectionProgress;
         } else if (currentSectionIndex > idx) {
-             localProgress = 1; // Past
+             localProgress = 1; 
         } else {
-             localProgress = 0; // Future
+             localProgress = 0; 
         }
 
         let opacity = 0;
@@ -259,29 +252,22 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         let scale = 1;
 
         if (localProgress < 0.10) {
-            // Entering (Fade In & Slide Up slightly) - Extremely fast entry
             opacity = localProgress / 0.10;
             translateY = 30 * (1 - opacity); 
             scale = 0.95 + (0.05 * opacity);
         } else if (localProgress < 0.85) {
-            // Holding (Visible & Steady) - Hold for majority of the short scroll
             opacity = 1;
             translateY = 0;
             scale = 1;
         } else {
-            // Exiting (Fade Out & Scroll Up)
-            // This mimics the "immediately scroll" feeling the user asked for
             const exitProgress = (localProgress - 0.85) / 0.15;
             opacity = 1 - exitProgress;
-            translateY = -80 * exitProgress; // Move up significantly to feel like scrolling away
+            translateY = -80 * exitProgress; 
             scale = 1 - (0.05 * exitProgress);
         }
 
-        // Apply styles
         card.style.opacity = opacity.toString();
         card.style.transform = `translateY(${translateY}px) scale(${scale})`;
-        
-        // Optimization: Hide completely if out of view to save paint
         card.style.visibility = opacity <= 0.01 ? 'hidden' : 'visible';
       });
     };
@@ -289,7 +275,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     const container = scrollContainerRef.current;
     if (container) {
       container.addEventListener('scroll', handleScroll);
-      handleScroll(); // Init
+      handleScroll(); 
     }
     return () => {
       if (container) {
@@ -303,19 +289,33 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     <div className="fixed inset-0 z-50 bg-black font-sans">
       
       {/* 1. Background Map Layer */}
-      <div className="fixed inset-0 z-0">
-        <div ref={mapRef} className="w-full h-full" />
-        {/* Darker mask with blur for background effect as requested */}
-        <div className="absolute inset-0 bg-black/80 pointer-events-none backdrop-blur-[3px]" />
+      {/* We use a black container and set map opacity to create a dark background effect */}
+      <div className="fixed inset-0 z-0 bg-black">
+        <div 
+            ref={mapRef} 
+            className={`w-full h-full transition-all duration-700 ${mapType === 'HYBRID' ? 'opacity-70' : 'opacity-40 grayscale-[30%] contrast-125'}`} 
+        />
+        {/* Additional gradient overlay for better text readability */}
+        <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/80 pointer-events-none" />
       </div>
 
-      {/* 2. Controls */}
-      <button 
-        onClick={onClose}
-        className="fixed top-6 right-6 z-50 bg-black/20 hover:bg-black/40 backdrop-blur-md text-white p-2 rounded-full transition-all border border-white/30 group"
-      >
-        <X size={24} className="group-hover:rotate-90 transition-transform" />
-      </button>
+      {/* 2. Top Controls */}
+      <div className="fixed top-6 right-6 z-50 flex gap-4">
+          <button 
+            onClick={toggleMapType}
+            className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
+            title={mapType === 'ROADMAP' ? "위성지도로 보기" : "일반지도로 보기"}
+          >
+            {mapType === 'ROADMAP' ? <Globe size={20} /> : <Layers size={20} />}
+          </button>
+
+          <button 
+            onClick={onClose}
+            className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
+          >
+            <X size={20} className="group-hover:rotate-90 transition-transform" />
+          </button>
+      </div>
 
       {/* 3. Scrollable Content Layer */}
       <div 
@@ -328,7 +328,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
             <span className="inline-block px-4 py-1 rounded-full border border-white/30 bg-black/30 backdrop-blur-sm text-sm font-light mb-6 tracking-widest uppercase">
               TripFlow Journey
             </span>
-            <h1 className="text-5xl md:text-7xl font-bold mb-6 leading-tight drop-shadow-lg">
+            <h1 className="text-5xl md:text-7xl font-bold mb-6 leading-tight drop-shadow-2xl">
               {trip.title}
             </h1>
             <div className="flex items-center justify-center space-x-6 text-white/80 text-sm md:text-base font-light tracking-wide">
@@ -349,33 +349,29 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         {/* Trip Points Stream */}
         <div className="w-full">
             {trip.points.map((point, idx) => (
-            // Sticky Container Setup
             <div 
                 key={point.id} 
                 style={{ height: `${SCROLL_HEIGHT_MULTIPLIER * 100}vh` }}
                 className="w-full relative"
             >
-                {/* Visual Guide Line (Optional, simplified) */}
-                <div className="absolute top-0 bottom-0 left-1/2 w-px bg-gradient-to-b from-white/0 via-white/20 to-white/0 transform -translate-x-1/2" />
+                {/* Connecting Line Visual */}
+                <div className="absolute top-0 bottom-0 left-1/2 w-px bg-gradient-to-b from-white/0 via-white/10 to-white/0 transform -translate-x-1/2" />
 
-                {/* Sticky Wrapper - Keeps the card centered in viewport while we scroll the section */}
                 <div className="sticky top-0 h-screen w-full flex items-center justify-center p-4 md:p-8 overflow-hidden">
-                    
-                    {/* The Card itself - animated via Ref */}
                     <div 
                         ref={el => cardRefs.current[idx] = el}
-                        className="w-full max-w-2xl bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden border border-white/20 transform will-change-transform opacity-0"
+                        className="w-full max-w-2xl bg-black/80 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden border border-white/10 transform will-change-transform opacity-0"
                     >
                         <div className="relative h-56 md:h-72 overflow-hidden group">
                             <img 
                                 src={point.photoUrl} 
                                 alt={point.title} 
-                                className="w-full h-full object-cover" 
+                                className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" 
                             />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
                             
                             <div className="absolute top-4 left-4">
-                                <span className="bg-black/40 backdrop-blur-md text-white px-3 py-1 rounded-full text-xs font-bold border border-white/20 shadow-lg">
+                                <span className="bg-black/50 backdrop-blur-md text-white px-3 py-1 rounded-full text-xs font-bold border border-white/10 shadow-lg">
                                     #{idx + 1} CHECKPOINT
                                 </span>
                             </div>
@@ -389,38 +385,38 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                             </div>
                         </div>
 
-                        <div className="p-6 md:p-8">
+                        <div className="p-6 md:p-8 text-gray-200">
                             <div className="flex items-start mb-6">
-                                <div className="bg-indigo-100 p-2 rounded-full mr-4 text-indigo-600 shrink-0">
+                                <div className="bg-indigo-500/20 p-2 rounded-full mr-4 text-indigo-400 shrink-0 border border-indigo-500/30">
                                     <MapPin size={20} />
                                 </div>
                                 <div>
                                     <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Location</h3>
-                                    <p className="text-lg font-bold text-gray-900 leading-none mb-1">{point.locationName}</p>
-                                    <p className="text-sm text-gray-500">{point.address}</p>
+                                    <p className="text-lg font-bold text-white leading-none mb-1">{point.locationName}</p>
+                                    <p className="text-sm text-gray-400">{point.address}</p>
                                 </div>
                             </div>
 
-                            <div className="prose prose-indigo max-w-none mb-6">
-                                <p className="text-gray-700 leading-relaxed text-base md:text-lg whitespace-pre-line line-clamp-4 md:line-clamp-none">
+                            <div className="prose prose-invert max-w-none mb-6">
+                                <p className="text-gray-300 leading-relaxed text-base md:text-lg whitespace-pre-line line-clamp-4 md:line-clamp-none">
                                     {point.description}
                                 </p>
                             </div>
 
                             {idx < trip.points.length - 1 && (
-                                <div className="border-t border-gray-200 pt-4 flex items-center justify-between">
+                                <div className="border-t border-white/10 pt-4 flex items-center justify-between">
                                     <div className="flex items-center text-gray-500 text-sm font-medium">
                                         <Navigation size={16} className="mr-2" />
                                         <span>Next Destination</span>
                                     </div>
-                                    <div className="flex items-center bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-full text-sm font-bold border border-indigo-100">
+                                    <div className="flex items-center bg-indigo-900/30 text-indigo-300 px-3 py-1.5 rounded-full text-sm font-bold border border-indigo-500/30">
                                         <span className="mr-2">{getTransportIcon(point.transportToNext)}</span>
                                         <span>{getTransportLabel(point.transportToNext)}</span>
                                     </div>
                                 </div>
                             )}
                              {idx === trip.points.length - 1 && (
-                                 <div className="border-t border-gray-200 pt-4 flex items-center justify-center text-indigo-600 font-bold">
+                                 <div className="border-t border-white/10 pt-4 flex items-center justify-center text-indigo-400 font-bold">
                                     🏁 여행 종료
                                  </div>
                             )}
@@ -432,7 +428,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         </div>
 
         {/* Outro Section */}
-        <div className="h-[80vh] flex flex-col justify-center items-center text-white p-8 bg-gradient-to-t from-black via-black/80 to-transparent relative z-20">
+        <div className="h-[80vh] flex flex-col justify-center items-center text-white p-8 bg-gradient-to-t from-black via-black/90 to-transparent relative z-20">
             <h2 className="text-4xl font-bold mb-6 drop-shadow-lg">End of Journey</h2>
             <div className="flex space-x-4 mb-12">
                 <button 
@@ -451,7 +447,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                 </button>
             </div>
 
-             {/* Review & Ratings Section inside Outro */}
+             {/* Review & Ratings Section */}
             <div className="w-full max-w-3xl bg-white/5 backdrop-blur-xl rounded-3xl p-8 border border-white/10">
                 <h3 className="text-2xl font-bold mb-6 flex items-center">
                     <Star className="text-yellow-400 mr-2" fill="currentColor" /> 
