@@ -216,4 +216,87 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
         {/* Trip Points Stream */}
         <div className="pb-[50vh]">
-            {trip.points.map((point, idx) =>
+            {trip.points.map((point, idx) => (
+            <div key={point.id} className="min-h-screen flex items-center justify-center p-4 md:p-8">
+                {/* Glassmorphism Card */}
+                <div 
+                    className={`
+                        w-full max-w-2xl bg-white/85 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden
+                        transition-all duration-700 ease-out transform
+                        ${idx === currentSegmentIndex ? 'opacity-100 translate-y-0 scale-100' : 'opacity-40 translate-y-10 scale-95 blur-[1px]'}
+                    `}
+                >
+                    {/* Card Header Image */}
+                    <div className="relative h-64 md:h-80 overflow-hidden group">
+                        <img 
+                            src={point.photoUrl} 
+                            alt={point.title} 
+                            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" 
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+                        
+                        <div className="absolute top-4 left-4">
+                            <span className="bg-black/50 backdrop-blur-md text-white px-3 py-1 rounded-full text-xs font-bold border border-white/20">
+                                #{idx + 1}
+                            </span>
+                        </div>
+
+                        <div className="absolute bottom-0 left-0 p-6 text-white w-full">
+                            <div className="flex items-center text-xs font-medium tracking-wider uppercase mb-1 opacity-90">
+                                <Clock size={12} className="mr-1" />
+                                {point.date.replace('T', ' ')}
+                            </div>
+                            <h2 className="text-3xl font-bold leading-tight">{point.title}</h2>
+                        </div>
+                    </div>
+
+                    {/* Card Body */}
+                    <div className="p-6 md:p-8">
+                        <div className="flex items-start mb-6">
+                            <MapPin className="text-indigo-600 mt-1 mr-3 shrink-0" size={20} />
+                            <div>
+                                <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wide">Location</h3>
+                                <p className="text-lg font-medium text-gray-800">{point.locationName}</p>
+                                <p className="text-sm text-gray-500">{point.address}</p>
+                            </div>
+                        </div>
+
+                        <div className="prose prose-indigo max-w-none mb-8">
+                            <p className="text-gray-600 leading-relaxed text-lg whitespace-pre-line font-light">
+                                {point.description}
+                            </p>
+                        </div>
+
+                        {/* Transport Info Footer */}
+                        <div className="border-t border-gray-200 pt-4 flex items-center justify-between">
+                            <div className="flex items-center text-gray-500 text-sm">
+                                <Navigation size={16} className="mr-2" />
+                                <span>Next Journey</span>
+                            </div>
+                            <div className="flex items-center bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg text-sm font-medium">
+                                <span className="mr-2 text-lg">{getTransportIcon(point.transportToNext)}</span>
+                                <span>{getTransportLabel(point.transportToNext)}로 이동</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            ))}
+        </div>
+
+        {/* Outro */}
+        <div className="h-[50vh] flex flex-col justify-center items-center text-white p-8">
+            <h2 className="text-3xl font-bold mb-4">Journey Completed</h2>
+            <button 
+                onClick={onClose}
+                className="px-8 py-3 bg-white text-black rounded-full font-bold hover:bg-gray-200 transition shadow-lg"
+            >
+                지도 닫기
+            </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default TripViewer;
