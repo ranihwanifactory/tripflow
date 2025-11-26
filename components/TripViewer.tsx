@@ -176,6 +176,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
       // Calculate progress relative to the content sections
       const sectionHeight = vh * SCROLL_HEIGHT_MULTIPLIER;
+      // Start calculation after the Hero section (which is 100vh)
       const rawProgress = (scrollTop - vh) / sectionHeight;
       const maxIndex = pathPoints.length - 1;
       
@@ -193,14 +194,17 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         const segmentProgress = rawProgress - index;
         
         // 1. Hold Phase (Card Visible): 0.0 ~ HOLD_THRESHOLD
+        // During this phase, the user is scrolling through the content card.
         if (segmentProgress < HOLD_THRESHOLD) {
             mapProgress = index;
         } 
         // 2. Hold Phase at End (Next Card Visible): (1-HOLD_THRESHOLD) ~ 1.0
+        // Arriving at next card
         else if (segmentProgress > 1 - HOLD_THRESHOLD) {
             mapProgress = index + 1;
         } 
         // 3. Travel Phase: HOLD_THRESHOLD ~ (1-HOLD_THRESHOLD)
+        // Traveling between points
         else {
             const moveRange = 1 - 2 * HOLD_THRESHOLD;
             const normalizedMove = (segmentProgress - HOLD_THRESHOLD) / moveRange;
@@ -236,30 +240,8 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         }
       }
 
-      // 2. Animate Cards Opacity (Synced with HOLD_THRESHOLD)
-      trip.points.forEach((_, idx) => {
-        const card = document.getElementById(`trip-card-${idx}`);
-        if (card) {
-          const distance = Math.abs(rawProgress - idx);
-          
-          let opacity = 0;
-          if (distance <= HOLD_THRESHOLD) {
-              // Fully visible during hold phase
-              opacity = 1;
-          } else {
-              // Fade out quickly after hold phase to reveal map
-              // Fade complete by HOLD_THRESHOLD + 0.2
-              const fadeDistance = distance - HOLD_THRESHOLD;
-              opacity = Math.max(0, 1 - fadeDistance * 5); 
-          }
-          
-          card.style.opacity = opacity.toString();
-          const scale = 0.95 + (0.05 * opacity);
-          const translateY = 20 * (1 - opacity);
-          card.style.transform = `scale(${scale}) translateY(${translateY}px)`;
-          card.style.pointerEvents = opacity > 0.8 ? 'auto' : 'none';
-        }
-      });
+      // 2. Animation Logic Removed
+      // We no longer fade out cards. They scroll naturally.
     };
 
     const container = scrollContainerRef.current;
@@ -326,25 +308,24 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         {/* Trip Points Stream */}
         <div className="w-full pb-[50vh]">
             {trip.points.map((point, idx) => (
-            // Each section is much taller than screen to allow for travel time
+            // Each section is tall to allow for "Travel Time" on the map
             <div 
                 key={point.id} 
                 style={{ height: `${SCROLL_HEIGHT_MULTIPLIER * 100}vh` }}
-                className="w-full relative"
+                className="w-full relative flex flex-col items-center"
             >
-                {/* Sticky card that stays in view while we travel through this section */}
-                <div className="sticky top-0 h-screen w-full flex items-center justify-center p-4 md:p-8 overflow-hidden">
-                    
-                    {/* Visual Connector Line */}
-                    {idx < trip.points.length - 1 && (
-                        <div className="absolute bottom-0 left-1/2 w-px h-1/2 bg-gradient-to-b from-white/0 to-white/30 transform -translate-x-1/2 hidden md:block" />
-                    )}
+                {/* Visual Connector Line between points */}
+                {idx < trip.points.length - 1 && (
+                    <div className="absolute top-[100vh] left-1/2 w-0.5 transform -translate-x-1/2 z-0 overflow-hidden" style={{ height: `calc(${SCROLL_HEIGHT_MULTIPLIER * 100}vh - 100vh)` }}>
+                        <div className="w-full h-full bg-gradient-to-b from-white/50 via-white/20 to-transparent dashed-line-effect" />
+                    </div>
+                )}
 
-                    {/* Card Container */}
+                {/* Content Card - Positioned at the start of the section, scrolls naturally */}
+                <div className="h-screen w-full flex items-center justify-center p-4 md:p-8 shrink-0 z-10">
                     <div 
                         id={`trip-card-${idx}`}
-                        className="w-full max-w-2xl bg-white/90 backdrop-blur-2xl rounded-3xl shadow-2xl overflow-hidden border border-white/40 transition-transform duration-100 ease-out origin-center"
-                        style={{ opacity: 0 }} // Initial state handled by JS
+                        className="w-full max-w-2xl bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden border border-white/20"
                     >
                         <div className="relative h-64 md:h-80 overflow-hidden group">
                             <img 
@@ -393,9 +374,9 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                         <Navigation size={16} className="mr-2" />
                                         <span>Next Destination</span>
                                     </div>
-                                    <div className="flex items-center bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-4 py-2 rounded-full text-sm font-bold shadow-lg">
+                                    <div className="flex items-center bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-4 py-2 rounded-full text-sm font-bold shadow-lg animate-pulse">
                                         <span className="mr-2 text-lg">{getTransportIcon(point.transportToNext)}</span>
-                                        <span>{getTransportLabel(point.transportToNext)}로 이동</span>
+                                        <span>{getTransportLabel(point.transportToNext)}로 이동 중...</span>
                                     </div>
                                 </div>
                             )}
@@ -406,6 +387,11 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                             )}
                         </div>
                     </div>
+                </div>
+
+                {/* Empty space for travel visualization */}
+                <div className="flex-1 w-full flex items-center justify-center pointer-events-none">
+                    {/* Optional: Add small indicators or milestones along the path if needed */}
                 </div>
             </div>
             ))}
