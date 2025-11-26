@@ -255,10 +255,8 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
   // Toggle Map Type
   const toggleMapType = () => {
-    if (!map || !window.kakao) return;
-    const nextType = mapType === 'ROADMAP' ? 'HYBRID' : 'ROADMAP';
-    setMapType(nextType);
-    map.setMapTypeId(window.kakao.maps.MapTypeId[nextType]);
+    // Just toggle state, let useEffect handle the map update
+    setMapType(prev => prev === 'ROADMAP' ? 'HYBRID' : 'ROADMAP');
   };
 
   // 1. Initialize Map
@@ -277,6 +275,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       zoomable: false,
       scrollwheel: false,
       disableDoubleClickZoom: true,
+      // Use current mapType for initial render
       mapTypeId: mapType === 'HYBRID' ? window.kakao.maps.MapTypeId.HYBRID : window.kakao.maps.MapTypeId.ROADMAP
     };
     const newMap = new window.kakao.maps.Map(mapRef.current, options);
@@ -363,7 +362,14 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         resizeObserver.disconnect();
     };
 
-  }, [fullBackgroundPath, sortedPoints, mapType]);
+  }, [fullBackgroundPath, sortedPoints]); // Removed mapType from dependency to prevent reset
+
+  // 1.5 Handle Map Type Change separately
+  useEffect(() => {
+     if (!map || !window.kakao) return;
+     const typeId = mapType === 'HYBRID' ? window.kakao.maps.MapTypeId.HYBRID : window.kakao.maps.MapTypeId.ROADMAP;
+     map.setMapTypeId(typeId);
+  }, [map, mapType]);
 
   // 2. Handle Scroll Logic (Curved Movement)
   useEffect(() => {
