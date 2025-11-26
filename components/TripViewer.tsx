@@ -49,6 +49,56 @@ const robustSort = (a: TripPoint, b: TripPoint) => {
     return a.id.localeCompare(b.id);
 };
 
+// --- Curve Helper Functions ---
+
+// Calculate a point on a Quadratic Bezier Curve at t (0 to 1)
+const getQuadraticBezierPoint = (t: number, p0: any, p1: any, p2: any) => {
+    const x = (1 - t) * (1 - t) * p0.getLng() + 2 * (1 - t) * t * p1.getLng() + t * t * p2.getLng();
+    const y = (1 - t) * (1 - t) * p0.getLat() + 2 * (1 - t) * t * p1.getLat() + t * t * p2.getLat();
+    return new window.kakao.maps.LatLng(y, x);
+};
+
+// Calculate a control point to create a curve between start and end
+// curvature: 0.2 is a standard curve amount
+// direction: 1 or -1 to flip the curve side
+const getControlPoint = (start: any, end: any, curvature: number = 0.2, direction: number = 1) => {
+    const startLat = start.getLat();
+    const startLng = start.getLng();
+    const endLat = end.getLat();
+    const endLng = end.getLng();
+
+    // Midpoint
+    const midLat = (startLat + endLat) / 2;
+    const midLng = (startLng + endLng) / 2;
+
+    // Vector from start to end
+    const dLat = endLat - startLat;
+    const dLng = endLng - startLng;
+
+    // Perpendicular vector (Normal)
+    // For vector (dx, dy), perpendicular is (-dy, dx) or (dy, -dx)
+    // We adjust by latitude scale (approximate) to make it look right on map
+    const normalLat = -dLng;
+    const normalLng = dLat;
+
+    // Apply offset
+    const controlLat = midLat + normalLat * curvature * direction;
+    const controlLng = midLng + normalLng * curvature * direction;
+
+    return new window.kakao.maps.LatLng(controlLat, controlLng);
+};
+
+// Generate an array of points for the full curve (for static drawing)
+const generateCurvePath = (start: any, end: any, control: any, segments: number = 50) => {
+    const path = [];
+    for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        path.push(getQuadraticBezierPoint(t, start, control, end));
+    }
+    return path;
+};
+
+
 const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -71,20 +121,43 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   const [editReviewText, setEditReviewText] = useState('');
   const [editReviewRating, setEditReviewRating] = useState(5);
 
-  // 0. Sort points chronologically to ensure correct path order regardless of saved order
+  // 0. Sort points chronologically
   const sortedPoints = useMemo(() => {
     if (!trip || !trip.points) return [];
     return [...trip.points].sort(robustSort);
   }, [trip]);
 
-  // Memoize path points based on SORTED points
-  const pathPoints = useMemo(() => {
-    if (!window.kakao || !window.kakao.maps || sortedPoints.length === 0) return [];
-    return sortedPoints.map(p => ({
-      latlng: new window.kakao.maps.LatLng(p.lat, p.lng),
-      data: p
-    }));
+  // Memoize path segments (Start, End, Control Point, Full Curve Path)
+  const pathSegments = useMemo(() => {
+    if (!window.kakao || !window.kakao.maps || sortedPoints.length < 2) return [];
+
+    const segments = [];
+    for (let i = 0; i < sortedPoints.length - 1; i++) {
+        const start = new window.kakao.maps.LatLng(sortedPoints[i].lat, sortedPoints[i].lng);
+        const end = new window.kakao.maps.LatLng(sortedPoints[i+1].lat, sortedPoints[i+1].lng);
+        
+        // Alternate curve direction for S-shape flow
+        const direction = i % 2 === 0 ? 1 : -1;
+        const control = getControlPoint(start, end, 0.25, direction);
+        
+        const curvePath = generateCurvePath(start, end, control);
+        
+        segments.push({
+            start,
+            end,
+            control,
+            curvePath,
+            data: sortedPoints[i]
+        });
+    }
+    return segments;
   }, [sortedPoints]);
+
+  // Combined full path for background line
+  const fullBackgroundPath = useMemo(() => {
+      return pathSegments.flatMap(seg => seg.curvePath);
+  }, [pathSegments]);
+
 
   // Fetch Reviews
   useEffect(() => {
@@ -96,7 +169,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const fetchedReviews: Review[] = [];
         snapshot.forEach(doc => fetchedReviews.push({ id: doc.id, ...doc.data() } as Review));
-        // Sort client side to allow working without index initially
+        // Sort client side
         fetchedReviews.sort((a, b) => b.createdAt - a.createdAt);
         setReviews(fetchedReviews);
     });
@@ -190,13 +263,15 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
   // 1. Initialize Map
   useEffect(() => {
-    if (!mapRef.current || pathPoints.length === 0) return;
+    if (!mapRef.current || sortedPoints.length === 0) return;
 
-    // Clear previous map if exists to avoid duplication
+    // Clear previous map
     mapRef.current.innerHTML = '';
 
+    const startPos = new window.kakao.maps.LatLng(sortedPoints[0].lat, sortedPoints[0].lng);
+
     const options = {
-      center: pathPoints[0].latlng,
+      center: startPos,
       level: 9, 
       draggable: false, 
       zoomable: false,
@@ -215,22 +290,22 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
     setTimeout(() => {
         newMap.relayout();
-        newMap.setCenter(pathPoints[0].latlng);
+        newMap.setCenter(startPos);
     }, 500);
 
-    const path = pathPoints.map(p => p.latlng);
-    
-    // Background Line
-    const backgroundPolyline = new window.kakao.maps.Polyline({
-      path: path,
-      strokeWeight: 6,
-      strokeColor: '#FFFFFF',
-      strokeOpacity: 0.3,
-      strokeStyle: 'solid'
-    });
-    backgroundPolyline.setMap(newMap);
+    // Draw Background Curved Line
+    if (fullBackgroundPath.length > 0) {
+        const backgroundPolyline = new window.kakao.maps.Polyline({
+          path: fullBackgroundPath,
+          strokeWeight: 6,
+          strokeColor: '#FFFFFF',
+          strokeOpacity: 0.3,
+          strokeStyle: 'solid'
+        });
+        backgroundPolyline.setMap(newMap);
+    }
 
-    // Active Line (Red)
+    // Initialize Active Line (Red)
     const activePolyline = new window.kakao.maps.Polyline({
         path: [],
         strokeWeight: 6,
@@ -241,8 +316,9 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     activePolyline.setMap(newMap);
     setTraveledPolyline(activePolyline);
 
-    // Add Checkpoint Markers with NUMBER
-    pathPoints.forEach((p, index) => {
+    // Add Checkpoint Markers
+    sortedPoints.forEach((p, index) => {
+      const pos = new window.kakao.maps.LatLng(p.lat, p.lng);
       const markerContent = document.createElement('div');
       markerContent.innerHTML = `
         <div style="
@@ -261,7 +337,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         ">${index + 1}</div>
       `;
       const customOverlay = new window.kakao.maps.CustomOverlay({
-        position: p.latlng,
+        position: pos,
         content: markerContent,
         yAnchor: 0.5,
         zIndex: 10
@@ -276,7 +352,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     transportContent.innerText = getTransportIcon(sortedPoints[0].transportToNext);
 
     const overlay = new window.kakao.maps.CustomOverlay({
-      position: pathPoints[0].latlng,
+      position: startPos,
       content: transportContent,
       zIndex: 100
     });
@@ -287,12 +363,12 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         resizeObserver.disconnect();
     };
 
-  }, [pathPoints, sortedPoints, trip, mapType]);
+  }, [fullBackgroundPath, sortedPoints, mapType]);
 
-  // 2. Handle Scroll Logic
+  // 2. Handle Scroll Logic (Curved Movement)
   useEffect(() => {
     const handleScroll = () => {
-      if (!scrollContainerRef.current || !map || !transportOverlay || !traveledPolyline || pathPoints.length < 2) return;
+      if (!scrollContainerRef.current || !map || !transportOverlay || !traveledPolyline || pathSegments.length === 0) return;
 
       const container = scrollContainerRef.current;
       const scrollTop = container.scrollTop;
@@ -302,47 +378,52 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       const sectionHeight = vh * SCROLL_HEIGHT_MULTIPLIER;
       
       const relativeScroll = Math.max(0, scrollTop - scrollStart);
-      const totalIndex = pathPoints.length;
+      const totalPoints = sortedPoints.length;
       
+      // Calculate which segment we are in
       const currentSectionIndex = Math.floor(relativeScroll / sectionHeight);
       const sectionProgress = (relativeScroll % sectionHeight) / sectionHeight;
       
-      let mapProgress = relativeScroll / sectionHeight;
+      // Clamp index to valid segments
+      const safeIndex = Math.min(currentSectionIndex, pathSegments.length - 1);
       
-      if (mapProgress < 0) mapProgress = 0;
-      if (mapProgress > totalIndex - 1) mapProgress = totalIndex - 1;
+      // Map Logic
+      if (safeIndex >= 0 && safeIndex < pathSegments.length) {
+          const segment = pathSegments[safeIndex];
+          
+          // Calculate position on the CURVE
+          const currentPos = getQuadraticBezierPoint(sectionProgress, segment.start, segment.control, segment.end);
+          
+          transportOverlay.setPosition(currentPos);
+          map.panTo(currentPos);
 
-      // Move Marker
-      const currentIndex = Math.floor(mapProgress);
-      const currentSegmentProgress = mapProgress - currentIndex;
-
-      if (currentIndex < pathPoints.length - 1) {
-        const start = pathPoints[currentIndex].latlng;
-        const end = pathPoints[currentIndex + 1].latlng;
-        
-        const currentLat = start.getLat() + (end.getLat() - start.getLat()) * currentSegmentProgress;
-        const currentLng = start.getLng() + (end.getLng() - start.getLng()) * currentSegmentProgress;
-        const currentPos = new window.kakao.maps.LatLng(currentLat, currentLng);
-
-        transportOverlay.setPosition(currentPos);
-        map.panTo(currentPos);
-        
-        const iconDiv = transportOverlay.getContent();
-        if(iconDiv && currentIndex < sortedPoints.length) {
-          const transportMode = sortedPoints[currentIndex].transportToNext;
-          const iconChar = getTransportIcon(transportMode);
-          if (iconDiv.innerText !== iconChar) {
-              iconDiv.innerText = iconChar;
+          // Update Icon
+          const iconDiv = transportOverlay.getContent();
+          if(iconDiv) {
+              const transportMode = segment.data.transportToNext;
+              const iconChar = getTransportIcon(transportMode);
+              if (iconDiv.innerText !== iconChar) {
+                  iconDiv.innerText = iconChar;
+              }
           }
-        }
 
-        const traveledPath = pathPoints.slice(0, currentIndex + 1).map(p => p.latlng);
-        traveledPath.push(currentPos); 
-        traveledPolyline.setPath(traveledPath);
+          // Update Red Path (History + Current Segment Partial)
+          // 1. All fully completed segments
+          const historyPath = pathSegments.slice(0, safeIndex).flatMap(s => s.curvePath);
+          
+          // 2. Current partial segment (generate curve up to progress t)
+          const currentPartialPath = generateCurvePath(segment.start, segment.end, segment.control, Math.floor(sectionProgress * 50));
+          
+          traveledPolyline.setPath([...historyPath, ...currentPartialPath]);
 
-      } else {
-        const fullPath = pathPoints.map(p => p.latlng);
-        traveledPolyline.setPath(fullPath);
+      } else if (currentSectionIndex >= pathSegments.length) {
+          // At the end
+          const lastPoint = sortedPoints[sortedPoints.length - 1];
+          const pos = new window.kakao.maps.LatLng(lastPoint.lat, lastPoint.lng);
+          transportOverlay.setPosition(pos);
+          
+          // Full path
+          traveledPolyline.setPath(fullBackgroundPath);
       }
 
       // Card Animation
@@ -395,7 +476,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         container.removeEventListener('scroll', handleScroll);
       }
     };
-  }, [map, transportOverlay, traveledPolyline, pathPoints, sortedPoints]);
+  }, [map, transportOverlay, traveledPolyline, pathSegments, fullBackgroundPath, sortedPoints]);
 
 
   return (
