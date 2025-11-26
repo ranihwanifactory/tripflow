@@ -4,7 +4,7 @@ import { TripPoint, TransportType, TripData } from '../types';
 import { db, auth, storage } from '../firebase';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X } from 'lucide-react';
+import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X, MapPin } from 'lucide-react';
 
 interface TripEditorProps {
   onFinish: () => void;
@@ -44,15 +44,16 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
   useEffect(() => {
     if (initialData) {
       setTripTitle(initialData.title);
-      setPoints(initialData.points);
+      // Sort points by date to ensure chronological order
+      const sortedPoints = [...initialData.points].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      setPoints(sortedPoints);
     }
   }, [initialData]);
 
-  // Initialize Map
+  // Initialize Map with ResizeObserver for robustness
   useEffect(() => {
     if (!mapRef.current) return;
 
-    // Use initial points center or default Seoul center
     const startLat = initialData && initialData.points.length > 0 ? initialData.points[0].lat : 37.566826;
     const startLng = initialData && initialData.points.length > 0 ? initialData.points[0].lng : 126.9786567;
 
@@ -69,17 +70,22 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     newMarker.setMap(newMap);
     setMarker(newMarker);
 
-    // FIX: Map rendering issue by forcing layout update
-    setTimeout(() => newMap.relayout(), 200);
+    // FIX: Resize Observer to handle container size changes
+    const resizeObserver = new ResizeObserver(() => {
+        newMap.relayout();
+        newMap.setCenter(newMap.getCenter());
+    });
+    resizeObserver.observe(mapRef.current);
 
-    // Map Click Event
+    // Initial relayout to ensure full rendering
+    setTimeout(() => newMap.relayout(), 500);
+
     window.kakao.maps.event.addListener(newMap, 'click', (mouseEvent: any) => {
       const latlng = mouseEvent.latLng;
       newMarker.setPosition(latlng);
       setCurrentLat(latlng.getLat());
       setCurrentLng(latlng.getLng());
       
-      // Reverse Geocoding
       const geocoder = new window.kakao.maps.services.Geocoder();
       geocoder.coord2Address(latlng.getLng(), latlng.getLat(), (result: any, status: any) => {
         if (status === window.kakao.maps.services.Status.OK) {
@@ -88,12 +94,14 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       });
     });
 
-    // Draw existing lines
     updatePolyline(newMap, points);
 
+    return () => {
+        resizeObserver.disconnect();
+    };
   }, [initialData]); 
 
-  // Update Polyline when points change
+  // Update Polyline
   useEffect(() => {
     if (map) {
         updatePolyline(map, points);
@@ -102,9 +110,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
 
   const updatePolyline = (targetMap: any, tripPoints: TripPoint[]) => {
       if (tripPoints.length < 2) return;
-      
       const linePath = tripPoints.map(p => new window.kakao.maps.LatLng(p.lat, p.lng));
-      
       const polyline = new window.kakao.maps.Polyline({
         path: linePath,
         strokeWeight: 5,
@@ -166,10 +172,9 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     let finalPhotoUrl = photoUrl;
 
     try {
-      // 1. Handle File Upload if selected
+      // 1. Handle File Upload
       if (photoFile) {
         const userId = auth.currentUser?.uid || 'anonymous';
-        // Random String to prevent duplicate overwrites
         const randomStr = Math.random().toString(36).substring(7);
         const fileName = `${Date.now()}_${randomStr}`;
         const storageRef = ref(storage, `trip_images/${userId}/${fileName}`);
@@ -177,17 +182,20 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
         try {
             const snapshot = await uploadBytes(storageRef, photoFile);
             finalPhotoUrl = await getDownloadURL(snapshot.ref);
-            console.log("Upload success:", finalPhotoUrl);
         } catch (uploadError: any) {
             console.error("Upload failed", uploadError);
-            alert(`사진 업로드 중 오류가 발생했습니다: ${uploadError.code || uploadError.message}. 텍스트 정보만 저장됩니다.`);
-            // Fallback placeholder
-            if (!finalPhotoUrl) finalPhotoUrl = `https://picsum.photos/400/300?random=${Math.random()}`;
+            // Fallback for unauthorized/permission errors
+            const keywords = ['travel', 'nature', 'road', 'city', 'food'];
+            const randomKeyword = keywords[Math.floor(Math.random() * keywords.length)];
+            finalPhotoUrl = `https://source.unsplash.com/800x600/?${randomKeyword}&sig=${Math.random()}`;
+            alert(`사진 업로드 권한 오류가 발생하여 랜덤 여행 이미지로 대체됩니다.\n(Firebase Storage Rules를 확인해주세요)`);
         }
       } 
-      // 2. If no new file and no existing URL, use placeholder
+      // 2. Use Fallback if empty
       else if (!finalPhotoUrl) {
-        finalPhotoUrl = `https://picsum.photos/400/300?random=${Math.random()}`;
+        const keywords = ['travel', 'landscape', 'view'];
+        const randomKeyword = keywords[Math.floor(Math.random() * keywords.length)];
+        finalPhotoUrl = `https://source.unsplash.com/800x600/?${randomKeyword}&sig=${Math.random()}`;
       }
 
       const pointData = {
@@ -202,22 +210,31 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
         photoUrl: finalPhotoUrl,
       };
 
+      let updatedPoints: TripPoint[] = [];
+
       if (editingPointId) {
-        setPoints(prev => prev.map(p => p.id === editingPointId ? { ...p, ...pointData } : p));
+        updatedPoints = points.map(p => p.id === editingPointId ? { ...p, ...pointData } : p);
       } else {
         const newPoint: TripPoint = {
             id: Date.now().toString(),
-            order: points.length,
+            order: 0, // Placeholder, will be reassigned
             ...pointData
         };
-        setPoints(prev => [...prev, newPoint]);
+        updatedPoints = [...points, newPoint];
       }
+
+      // Sort chronological by date
+      updatedPoints.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
       
+      // Reassign order
+      updatedPoints = updatedPoints.map((p, idx) => ({ ...p, order: idx }));
+
+      setPoints(updatedPoints);
       clearForm();
 
     } catch (error) {
       console.error("Error processing point:", error);
-      alert("지점 저장 중 알 수 없는 오류가 발생했습니다.");
+      alert("지점 저장 중 오류가 발생했습니다.");
     } finally {
       setIsUploadingPoint(false);
     }
@@ -254,221 +271,234 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
   };
 
   return (
-    <div className="flex flex-col h-screen md:flex-row">
-      {/* Sidebar Form */}
-      <div className="w-full md:w-96 bg-white shadow-lg overflow-hidden flex flex-col border-r border-gray-200">
+    <div className="flex flex-col h-screen md:flex-row bg-gray-50">
+      {/* Sidebar - Fixed Layout */}
+      <div className="w-full md:w-[420px] bg-white shadow-xl z-20 flex flex-col h-full border-r border-gray-200">
         
-        {/* Header */}
-        <div className="p-6 pb-2">
-            <div className="flex items-center mb-4">
+        {/* 1. Header Area (Fixed) */}
+        <div className="p-5 border-b bg-white z-10">
+            <div className="flex items-center mb-3">
                 <button onClick={onFinish} className="mr-3 p-2 hover:bg-gray-100 rounded-full transition">
                     <ArrowLeft size={20} className="text-gray-600"/>
                 </button>
-                <h2 className="text-2xl font-bold text-indigo-700">
+                <h2 className="text-xl font-bold text-indigo-800">
                     {initialData ? '여행 수정하기' : '새 여행 만들기'}
                 </h2>
             </div>
-            
-            <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">여행 제목</label>
+            <div>
                 <input 
                     type="text" 
-                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-indigo-500"
-                    placeholder="예: 3박 4일 제주도 여행"
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-lg font-bold"
+                    placeholder="여행 제목 (예: 부산 식도락 여행)"
                     value={tripTitle}
                     onChange={(e) => setTripTitle(e.target.value)}
                 />
             </div>
         </div>
 
-        {/* Scrollable Content Area */}
-        <div className="flex-1 overflow-y-auto px-6 pb-6">
-            
-            {/* 1. Point List (Moved to Top as requested) */}
-            <div className="mb-6">
-                <h4 className="font-medium text-gray-600 mb-2 flex justify-between items-center">
-                    <span>등록된 경로 ({points.length})</span>
-                    <span className="text-xs text-gray-400">수정하려면 연필 아이콘 클릭</span>
+        {/* 2. Registered List Area (Fixed Height, Scrollable) */}
+        <div className="bg-gray-50 border-b flex-shrink-0">
+             <div className="px-5 py-3 flex justify-between items-center bg-gray-100/50">
+                <h4 className="font-bold text-gray-600 text-sm flex items-center">
+                    <MapPin size={14} className="mr-1"/> 등록된 경로 ({points.length})
+                    <span className="text-[10px] text-gray-400 font-normal ml-2">(시간순 자동정렬)</span>
                 </h4>
-                <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1 border rounded-lg p-2 bg-gray-50">
-                    {points.length === 0 && <p className="text-center text-sm text-gray-400 py-4">지점을 추가해주세요</p>}
-                    {points.map((p, idx) => (
+                <span className="text-xs text-indigo-500 font-medium bg-indigo-50 px-2 py-0.5 rounded">수정하려면 클릭</span>
+             </div>
+             
+             <div className="max-h-[220px] overflow-y-auto p-4 space-y-2 custom-scrollbar">
+                {points.length === 0 && (
+                    <div className="text-center py-6 border-2 border-dashed border-gray-300 rounded-lg bg-white">
+                        <MapPin className="mx-auto text-gray-300 mb-2" />
+                        <p className="text-xs text-gray-400">지도에서 위치를 선택하고<br/>아래 폼을 작성하여 추가해주세요.</p>
+                    </div>
+                )}
+                {points.map((p, idx) => (
                     <div 
                         key={p.id} 
-                        className={`p-3 bg-white border rounded-lg shadow-sm flex justify-between items-start ${editingPointId === p.id ? 'border-yellow-400 ring-2 ring-yellow-400' : ''}`}
+                        onClick={() => handleEditPoint(p)}
+                        className={`p-3 bg-white border rounded-lg shadow-sm flex gap-3 hover:shadow-md transition cursor-pointer group ${editingPointId === p.id ? 'border-yellow-500 ring-1 ring-yellow-500 bg-yellow-50' : 'border-gray-200'}`}
                     >
-                        <div className="flex items-start cursor-pointer flex-1" onClick={() => handleEditPoint(p)}>
-                            {p.photoUrl && <img src={p.photoUrl} alt="thumb" className="w-10 h-10 rounded object-cover mr-2 bg-gray-100" />}
-                            <div>
-                                <div className="font-bold text-sm text-indigo-900">#{idx + 1} {p.title}</div>
-                                <div className="text-xs text-gray-500">{p.locationName}</div>
+                        <div className="w-12 h-12 bg-gray-100 rounded-md overflow-hidden flex-shrink-0">
+                            <img src={p.photoUrl} alt="" className="w-full h-full object-cover" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <h5 className="font-bold text-sm text-gray-800 truncate">
+                                        <span className="text-indigo-600 mr-1">#{idx + 1}</span>
+                                        {p.title}
+                                    </h5>
+                                    <p className="text-[10px] text-gray-500 font-medium">
+                                        {new Date(p.date).toLocaleString([], {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'})}
+                                    </p>
+                                </div>
+                                <button 
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        if(window.confirm('삭제하시겠습니까?')) {
+                                            setPoints(points.filter(pt => pt.id !== p.id));
+                                            if(editingPointId === p.id) clearForm();
+                                        }
+                                    }}
+                                    className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1"
+                                >
+                                    <Trash2 size={14} />
+                                </button>
+                            </div>
+                            <p className="text-xs text-gray-500 truncate mt-0.5">{p.locationName}</p>
+                            <div className="flex items-center mt-1">
+                                <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border">
+                                    {p.transportToNext === 'CAR' ? '🚗' : '🚶'} 이동
+                                </span>
                             </div>
                         </div>
-                        <div className="flex space-x-1">
-                            <button 
-                                onClick={() => handleEditPoint(p)}
-                                className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded"
-                                title="수정"
-                            >
-                                <Pencil size={14} />
-                            </button>
-                            <button 
-                                onClick={() => {
-                                    if(window.confirm('정말 삭제하시겠습니까?')) {
-                                        setPoints(points.filter(pt => pt.id !== p.id));
-                                        if(editingPointId === p.id) clearForm();
-                                    }
-                                }}
-                                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
-                                title="삭제"
-                            >
-                                <Trash2 size={14} />
-                            </button>
-                        </div>
                     </div>
-                    ))}
-                </div>
-            </div>
+                ))}
+             </div>
+        </div>
 
-            {/* 2. Form Area */}
-            <div className={`bg-gray-50 p-4 rounded-xl border mb-6 transition-colors ${editingPointId ? 'border-yellow-400 bg-yellow-50/50' : 'border-gray-200'}`}>
-            <div className="flex justify-between items-center mb-3">
-                <h3 className="font-semibold text-gray-700 flex items-center">
-                    {editingPointId ? <Pencil size={18} className="mr-2 text-yellow-600"/> : <Plus size={18} className="mr-2" />} 
-                    {editingPointId ? '지점 수정 모드' : '새 지점 등록'}
-                </h3>
-                {editingPointId && (
-                    <button onClick={clearForm} className="text-xs flex items-center text-gray-500 hover:text-gray-700 bg-white px-2 py-1 rounded border">
-                        <X size={12} className="mr-1"/> 취소
-                    </button>
-                )}
-            </div>
-            
-            <div className="space-y-3">
-                <input 
-                    type="text" 
-                    className="w-full p-2 border rounded text-sm"
-                    placeholder="장소명 (지도 클릭 시 자동 주소)"
-                    value={locationName}
-                    onChange={(e) => setLocationName(e.target.value)}
-                />
-                <input 
-                    type="text" 
-                    className="w-full p-2 border rounded text-sm bg-gray-100"
-                    placeholder="주소 (자동 입력)"
-                    value={address}
-                    readOnly
-                />
-                <input 
-                    type="datetime-local" 
-                    className="w-full p-2 border rounded text-sm"
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                />
-                
-                <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-600">다음 이동:</span>
-                <select 
-                    className="flex-1 p-2 border rounded text-sm"
-                    value={transport}
-                    onChange={(e) => setTransport(e.target.value as TransportType)}
-                >
-                    <option value="CAR">자동차 🚗</option>
-                    <option value="WALK">도보 🚶</option>
-                    <option value="TRAIN">기차 🚆</option>
-                    <option value="BUS">버스 🚌</option>
-                    <option value="PLANE">비행기 ✈️</option>
-                    <option value="SHIP">배 ⛴️</option>
-                </select>
-                </div>
-
-                <input 
-                    type="text" 
-                    className="w-full p-2 border rounded text-sm"
-                    placeholder="지점 제목 (예: 맛있는 점심)"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                />
-                <textarea 
-                    className="w-full p-2 border rounded text-sm"
-                    placeholder="여행 이야기..."
-                    rows={3}
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                />
-                
-                {/* Photo Upload Section */}
-                <div className="space-y-2">
-                <label className="text-xs font-medium text-gray-500">사진 등록</label>
-                
-                <label className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer hover:bg-gray-50 transition relative overflow-hidden ${photoFile ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'}`}>
-                    {previewUrl ? (
-                        <img src={previewUrl} alt="Preview" className="h-full w-full object-cover rounded-lg" />
-                    ) : (
-                        <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                            <ImageIcon className="w-8 h-8 text-gray-400 mb-2" />
-                            <p className="text-xs text-gray-500">클릭하여 이미지 업로드</p>
-                        </div>
+        {/* 3. Input Form Area (Scrollable) */}
+        <div className="flex-1 overflow-y-auto p-5 bg-white">
+            <div className={`p-4 rounded-xl border transition-all ${editingPointId ? 'border-yellow-400 bg-yellow-50/30 shadow-inner' : 'border-indigo-100 bg-indigo-50/30'}`}>
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="font-bold text-gray-800 flex items-center text-sm">
+                        {editingPointId ? 
+                            <><Pencil size={16} className="mr-2 text-yellow-600"/> 선택한 지점 수정 중</> : 
+                            <><Plus size={16} className="mr-2 text-indigo-600"/> 새 지점 정보 입력</>
+                        }
+                    </h3>
+                    {editingPointId && (
+                        <button onClick={clearForm} className="text-xs flex items-center text-gray-500 hover:text-gray-800 bg-white px-2 py-1 rounded border shadow-sm">
+                            <X size={12} className="mr-1"/> 수정 취소
+                        </button>
                     )}
-                    {previewUrl && (
+                </div>
+
+                <div className="space-y-3">
+                    <div>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">장소명</label>
+                        <input 
+                            type="text" 
+                            className="w-full p-2.5 border rounded-lg text-sm focus:ring-1 focus:ring-indigo-500 outline-none"
+                            placeholder="지도 클릭 시 자동 입력"
+                            value={locationName}
+                            onChange={(e) => setLocationName(e.target.value)}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">방문 날짜</label>
+                        <input 
+                            type="datetime-local" 
+                            className="w-full p-2.5 border rounded-lg text-sm outline-none"
+                            value={date}
+                            onChange={(e) => setDate(e.target.value)}
+                        />
+                    </div>
+                    
+                    <div>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">다음 장소까지 이동 수단</label>
+                        <select 
+                            className="w-full p-2.5 border rounded-lg text-sm outline-none bg-white"
+                            value={transport}
+                            onChange={(e) => setTransport(e.target.value as TransportType)}
+                        >
+                            <option value="CAR">자동차 🚗</option>
+                            <option value="WALK">도보 🚶</option>
+                            <option value="TRAIN">기차 🚆</option>
+                            <option value="BUS">버스 🚌</option>
+                            <option value="PLANE">비행기 ✈️</option>
+                            <option value="SHIP">배 ⛴️</option>
+                        </select>
+                    </div>
+
+                    <div>
+                         <label className="block text-xs font-medium text-gray-500 mb-1">제목</label>
+                        <input 
+                            type="text" 
+                            className="w-full p-2.5 border rounded-lg text-sm outline-none"
+                            placeholder="지점의 제목 (예: 맛있는 점심)"
+                            value={title}
+                            onChange={(e) => setTitle(e.target.value)}
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">이야기</label>
+                        <textarea 
+                            className="w-full p-2.5 border rounded-lg text-sm outline-none min-h-[80px]"
+                            placeholder="이곳에서의 추억을 기록하세요..."
+                            value={description}
+                            onChange={(e) => setDescription(e.target.value)}
+                        />
+                    </div>
+
+                    {/* Photo Upload */}
+                    <div>
+                         <label className="block text-xs font-medium text-gray-500 mb-1">사진 (파일 또는 URL)</label>
+                         <div className="space-y-2">
+                             <div className="flex gap-2">
+                                <label className={`flex-1 flex flex-col items-center justify-center h-20 border-2 border-dashed rounded-lg cursor-pointer hover:bg-gray-50 transition relative overflow-hidden ${photoFile ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'}`}>
+                                    {previewUrl && !photoUrl ? (
+                                        <img src={previewUrl} alt="Preview" className="h-full w-full object-cover" />
+                                    ) : (
+                                        <div className="flex flex-col items-center justify-center">
+                                            <ImageIcon className="w-5 h-5 text-gray-400 mb-1" />
+                                            <span className="text-[10px] text-gray-500">파일 선택</span>
+                                        </div>
+                                    )}
+                                    <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
+                                </label>
+                                
+                                {previewUrl && (
+                                    <div className="w-20 h-20 rounded-lg overflow-hidden border border-gray-200 bg-gray-100 relative">
+                                        <img src={previewUrl} className="w-full h-full object-cover" alt="Current" />
+                                        <button 
+                                            onClick={() => { setPhotoFile(null); setPreviewUrl(''); setPhotoUrl(''); }}
+                                            className="absolute top-0 right-0 bg-red-500 text-white p-1 rounded-bl-lg"
+                                        >
+                                            <Trash2 size={12} />
+                                        </button>
+                                    </div>
+                                )}
+                             </div>
+                             <input 
+                                type="text" 
+                                className="w-full p-2 border rounded-lg text-xs"
+                                placeholder="이미지 URL 직접 입력"
+                                value={photoUrl}
+                                onChange={(e) => {
+                                    setPhotoUrl(e.target.value);
+                                    setPreviewUrl(e.target.value);
+                                    setPhotoFile(null);
+                                }}
+                            />
+                         </div>
+                    </div>
+
                     <button 
-                        onClick={(e) => {
-                        e.preventDefault();
-                        setPhotoFile(null);
-                        setPreviewUrl('');
-                        setPhotoUrl('');
-                        }}
-                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 shadow-sm hover:bg-red-600 z-10"
+                        onClick={handleAddOrUpdatePoint}
+                        disabled={isUploadingPoint}
+                        className={`w-full py-3 rounded-xl transition flex justify-center items-center font-bold text-white shadow-md ${
+                            isUploadingPoint ? 'bg-gray-400' : 
+                            editingPointId ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-indigo-600 hover:bg-indigo-700'
+                        }`}
                     >
-                        <Trash2 size={12} />
+                    {isUploadingPoint ? <Loader2 className="animate-spin" size={20} /> : (editingPointId ? '지점 수정 완료' : '지점 추가')}
                     </button>
-                    )}
-                    <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
-                </label>
-
-                <input 
-                    type="text" 
-                    className="w-full p-2 border rounded text-sm text-gray-600"
-                    placeholder="또는 이미지 URL 직접 입력"
-                    value={photoUrl}
-                    onChange={(e) => {
-                        setPhotoUrl(e.target.value);
-                        setPreviewUrl(e.target.value);
-                        setPhotoFile(null);
-                    }}
-                />
                 </div>
-
-                <button 
-                    onClick={handleAddOrUpdatePoint}
-                    disabled={isUploadingPoint}
-                    className={`w-full text-white py-2 rounded-lg transition flex justify-center items-center font-semibold ${
-                        isUploadingPoint ? 'bg-gray-400 cursor-not-allowed' : 
-                        editingPointId ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-indigo-600 hover:bg-indigo-700'
-                    }`}
-                >
-                {isUploadingPoint ? (
-                    <>
-                    <Loader2 className="animate-spin mr-2" size={18} />
-                    사진 업로드 중...
-                    </>
-                ) : (
-                    editingPointId ? '지점 업데이트' : '지점 추가하기'
-                )}
-                </button>
-            </div>
             </div>
         </div>
         
-        {/* Footer Action */}
-        <div className="p-4 border-t bg-gray-50">
+        {/* 4. Footer Save Action */}
+        <div className="p-4 bg-white border-t">
             <button 
             onClick={handleSaveTrip}
             disabled={isSaving || points.length < 2}
-            className={`w-full text-white py-3 rounded-xl font-bold shadow-lg flex items-center justify-center ${isSaving || points.length < 2 ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
+            className={`w-full text-white py-3.5 rounded-xl font-bold shadow-lg flex items-center justify-center text-lg ${isSaving || points.length < 2 ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
             >
             <Save size={20} className="mr-2" />
-            {isSaving ? '저장 중...' : (initialData ? '수정 완료' : '여행 지도 발행하기')}
+            {isSaving ? '저장 중...' : '여행 지도 발행하기'}
             </button>
         </div>
 
@@ -476,9 +506,12 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
 
       {/* Map Area */}
       <div className="flex-1 relative bg-gray-200">
-        <div ref={mapRef} className="w-full h-full" />
-        <div className="absolute top-4 left-4 z-10 bg-white px-4 py-2 rounded shadow text-sm font-medium text-gray-600">
-          지도에서 위치를 클릭하여 추가하거나 수정하세요
+        <div ref={mapRef} className="w-full h-full absolute inset-0" />
+        <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur px-4 py-3 rounded-xl shadow-lg border border-white/20">
+          <p className="text-sm font-bold text-indigo-900 flex items-center">
+            <MapPin size={16} className="mr-2 text-indigo-600"/>
+            지도에서 위치를 클릭하여 추가하세요
+          </p>
         </div>
       </div>
     </div>

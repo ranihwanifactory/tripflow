@@ -144,11 +144,18 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     const newMap = new window.kakao.maps.Map(mapRef.current, options);
     setMap(newMap);
 
+    // Resize Observer for robustness
+    const resizeObserver = new ResizeObserver(() => {
+        newMap.relayout();
+        newMap.setCenter(newMap.getCenter());
+    });
+    resizeObserver.observe(mapRef.current);
+
     // Fix map rendering issues by forcing layout update
     setTimeout(() => {
         newMap.relayout();
         newMap.setCenter(pathPoints[0].latlng);
-    }, 200);
+    }, 500);
 
     const path = pathPoints.map(p => p.latlng);
     
@@ -208,6 +215,10 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     });
     overlay.setMap(newMap);
     setTransportOverlay(overlay);
+
+    return () => {
+        resizeObserver.disconnect();
+    };
 
   }, [pathPoints, trip]);
 
@@ -528,7 +539,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                 </div>
 
                 {/* Review List */}
-                <div className="space-y-3 overflow-y-auto no-scrollbar pr-1">
+                <div className="space-y-3 overflow-y-auto max-h-64 no-scrollbar pr-1">
                     {reviews.length === 0 ? (
                         <p className="text-center text-white/50 py-4 text-xs">아직 작성된 리뷰가 없습니다.</p>
                     ) : (
