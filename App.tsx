@@ -4,14 +4,14 @@ import TripEditor from './components/TripEditor';
 import TripViewer from './components/TripViewer';
 import { auth, db } from './firebase';
 import { User, onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, deleteDoc, doc } from 'firebase/firestore';
 import { TripData } from './types';
-import { Map, Plus, LogOut, Loader2, MapPin } from 'lucide-react';
+import { Map, Plus, LogOut, Loader2, MapPin, Pencil, Trash2 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'LIST' | 'create' | 'VIEW'>('LIST');
+  const [view, setView] = useState<'LIST' | 'create' | 'EDIT' | 'VIEW'>('LIST');
   const [trips, setTrips] = useState<TripData[]>([]);
   const [selectedTrip, setSelectedTrip] = useState<TripData | null>(null);
 
@@ -35,19 +35,36 @@ const App: React.FC = () => {
       const q = query(
         collection(db, 'trips'),
         where('userId', '==', user.uid)
-        // Note: orderBy requires an index in Firebase if combined with where. 
-        // If error occurs, remove orderBy or create index via link in console.
       );
       const querySnapshot = await getDocs(q);
       const fetchedTrips: TripData[] = [];
       querySnapshot.forEach((doc) => {
         fetchedTrips.push({ id: doc.id, ...doc.data() } as TripData);
       });
-      // Client side sort if index missing
       fetchedTrips.sort((a,b) => b.createdAt - a.createdAt);
       setTrips(fetchedTrips);
     } catch (error) {
       console.error("Error fetching trips:", error);
+    }
+  };
+
+  const handleEditTrip = (e: React.MouseEvent, trip: TripData) => {
+    e.stopPropagation();
+    setSelectedTrip(trip);
+    setView('EDIT');
+  };
+
+  const handleDeleteTrip = async (e: React.MouseEvent, tripId: string) => {
+    e.stopPropagation();
+    if (window.confirm("정말로 이 여행 기록을 삭제하시겠습니까? 복구할 수 없습니다.")) {
+        try {
+            await deleteDoc(doc(db, "trips", tripId));
+            setTrips(trips.filter(t => t.id !== tripId));
+            alert("삭제되었습니다.");
+        } catch (error) {
+            console.error("Error deleting trip:", error);
+            alert("삭제 중 오류가 발생했습니다.");
+        }
     }
   };
 
@@ -65,6 +82,10 @@ const App: React.FC = () => {
     return <TripEditor onFinish={() => setView('LIST')} />;
   }
 
+  if (view === 'EDIT') {
+      return <TripEditor onFinish={() => { setSelectedTrip(null); setView('LIST'); }} initialData={selectedTrip} />;
+  }
+
   if (view === 'VIEW' && selectedTrip) {
     return <TripViewer trip={selectedTrip} onClose={() => { setSelectedTrip(null); setView('LIST'); }} />;
   }
@@ -73,7 +94,7 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow-sm sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex justify-between items-center">
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2 cursor-pointer" onClick={() => setView('LIST')}>
             <Map className="text-indigo-600" />
             <h1 className="text-xl font-bold text-gray-900">TripFlow</h1>
           </div>
@@ -109,8 +130,26 @@ const App: React.FC = () => {
               <div 
                 key={trip.id} 
                 onClick={() => { setSelectedTrip(trip); setView('VIEW'); }}
-                className="bg-white rounded-xl shadow-sm hover:shadow-xl transition-shadow cursor-pointer overflow-hidden border border-gray-100 group"
+                className="bg-white rounded-xl shadow-sm hover:shadow-xl transition-shadow cursor-pointer overflow-hidden border border-gray-100 group relative"
               >
+                {/* Edit/Delete Controls */}
+                <div className="absolute top-2 right-2 z-10 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                        onClick={(e) => handleEditTrip(e, trip)}
+                        className="p-2 bg-white/90 hover:bg-white text-indigo-600 rounded-full shadow-md"
+                        title="수정"
+                    >
+                        <Pencil size={16} />
+                    </button>
+                    <button 
+                        onClick={(e) => trip.id && handleDeleteTrip(e, trip.id)}
+                        className="p-2 bg-white/90 hover:bg-white text-red-500 rounded-full shadow-md"
+                        title="삭제"
+                    >
+                        <Trash2 size={16} />
+                    </button>
+                </div>
+
                 <div className="h-48 overflow-hidden relative">
                    <img 
                     src={trip.points[0]?.photoUrl || 'https://picsum.photos/400/300'} 

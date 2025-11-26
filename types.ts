@@ -14,7 +14,7 @@ export interface TripPoint {
   locationName: string; // 업체 or 지역명
   address: string;
   date: string; // ISO String
-  transportToNext: TransportType; // Method used to get to the NEXT point (or form previous if easier logic) - Let's interpret as "How I got here" or "Leaving here via"
+  transportToNext: TransportType; // Method used to get to the NEXT point (or form previous if easier logic)
   title: string;
   description: string;
   photoUrl: string;
@@ -26,6 +26,17 @@ export interface TripData {
   userId: string;
   title: string;
   points: TripPoint[];
+  createdAt: number;
+}
+
+export interface Review {
+  id: string;
+  tripId: string;
+  userId: string;
+  userName: string;
+  userPhoto: string | null;
+  rating: number;
+  text: string;
   createdAt: number;
 }
 
