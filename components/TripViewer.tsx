@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { TripData, TransportType, Review } from '../types';
 import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send, Globe, Layers } from 'lucide-react';
 import { db, auth } from '../firebase';
-import { collection, addDoc, query, where, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, addDoc, query, where, onSnapshot } from 'firebase/firestore';
 
 interface TripViewerProps {
   trip: TripData;
@@ -47,7 +47,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   // Separate polylines: one for the full static path, one for the dynamic traveled path
   const [traveledPolyline, setTraveledPolyline] = useState<any>(null);
   
-  const [mapType, setMapType] = useState<'ROADMAP' | 'HYBRID'>('ROADMAP');
+  const [mapType, setMapType] = useState<'ROADMAP' | 'HYBRID'>('HYBRID');
 
   // Review State
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -67,14 +67,16 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   // Fetch Reviews
   useEffect(() => {
     if(!trip.id) return;
+    // Removed orderBy from query to avoid "Missing Index" error in Firestore
     const q = query(
         collection(db, 'reviews'), 
-        where('tripId', '==', trip.id),
-        orderBy('createdAt', 'desc')
+        where('tripId', '==', trip.id)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const fetchedReviews: Review[] = [];
         snapshot.forEach(doc => fetchedReviews.push({ id: doc.id, ...doc.data() } as Review));
+        // Sort client-side
+        fetchedReviews.sort((a, b) => b.createdAt - a.createdAt);
         setReviews(fetchedReviews);
     });
     return unsubscribe;
@@ -520,7 +522,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                 </div>
 
                 {/* Review List */}
-                <div className="space-y-3 max-h-[300px] overflow-y-auto no-scrollbar pr-1">
+                <div className="space-y-3 overflow-y-auto no-scrollbar pr-1">
                     {reviews.length === 0 ? (
                         <p className="text-center text-white/50 py-4 text-xs">아직 작성된 리뷰가 없습니다.</p>
                     ) : (
