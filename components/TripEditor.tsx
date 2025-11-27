@@ -4,7 +4,7 @@ import { TripPoint, TransportType, TripData, BgmType } from '../types';
 import { db, auth, storage } from '../firebase';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X, MapPin, AlertCircle, Music, Youtube, FileAudio, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X, MapPin, AlertCircle, Music, Youtube, FileAudio, ChevronDown, ChevronUp, Crosshair } from 'lucide-react';
 
 interface TripEditorProps {
   onFinish: () => void;
@@ -39,6 +39,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
   const [tripTitle, setTripTitle] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingPoint, setIsUploadingPoint] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
 
   // BGM State
   const [bgmType, setBgmType] = useState<BgmType>('NONE');
@@ -104,6 +105,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     // --- GEOLOCATION LOGIC START ---
     // If it's a new trip (no initial data), try to get user's current location
     if (!initialData && navigator.geolocation) {
+        setIsLocating(true);
         navigator.geolocation.getCurrentPosition(
             (position) => {
                 const lat = position.coords.latitude;
@@ -121,12 +123,16 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                 geocoder.coord2Address(lng, lat, (result: any, status: any) => {
                     if (status === window.kakao.maps.services.Status.OK) {
                         setAddress(result[0].address.address_name);
+                        setLocationName("현재 위치");
                     }
                 });
+                setIsLocating(false);
             },
             (error) => {
                 console.warn("Geolocation failed or denied:", error);
-            }
+                setIsLocating(false);
+            },
+            { enableHighAccuracy: true, timeout: 5000 }
         );
     }
     // --- GEOLOCATION LOGIC END ---
@@ -692,6 +698,12 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       {/* Map Area */}
       <div className="flex-1 relative bg-gray-200">
         <div ref={mapRef} className="w-full h-full absolute inset-0" />
+        {isLocating && (
+             <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 bg-white px-5 py-3 rounded-full shadow-xl flex items-center animate-bounce">
+                <Loader2 className="animate-spin mr-2 text-indigo-600"/>
+                <span className="text-sm font-bold text-gray-700">현재 위치를 찾는 중...</span>
+             </div>
+        )}
         <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur px-4 py-3 rounded-xl shadow-lg border border-white/20">
           <p className="text-sm font-bold text-indigo-900 flex items-center">
             <MapPin size={16} className="mr-2 text-indigo-600"/>

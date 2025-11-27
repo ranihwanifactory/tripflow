@@ -504,16 +504,34 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
               // Special rotation for PLANE
               if (transportMode === 'PLANE') {
-                  const nextT = Math.min(sectionProgress + 0.05, 1);
+                  // Look ahead further (0.05 -> 0.1) to get stable direction
+                  const nextT = Math.min(sectionProgress + 0.1, 1);
                   const nextPos = getQuadraticBezierPoint(nextT, segment.start, segment.control, segment.end);
                   
                   const dLat = nextPos.getLat() - currentPos.getLat();
                   const dLng = nextPos.getLng() - currentPos.getLng();
+                  
+                  // atan2(y, x). Kakao Lat is Y, Lng is X.
+                  // Returns angle in radians, convert to degrees.
                   const angle = Math.atan2(dLat, dLng) * (180 / Math.PI);
-
-                  // Plane emoji ✈️ points approx NE (45deg). 
-                  // Formula to face travel direction: -angle + 45
-                  iconDiv.style.transform = `translate(-50%, -50%) rotate(${-angle + 45}deg)`;
+                  
+                  // Plane Emoji ✈️  usually points North-East (45deg).
+                  // CSS rotate is clockwise. Math angle is counter-clockwise.
+                  // We want visual angle = Travel Angle.
+                  // Visual = 45 + Rotation(CSS).
+                  // Travel (Math) = Angle.
+                  // Travel (CSS equiv) = -Angle.
+                  // So 45 + Rotation = -Angle + 90 (Adjustment for coordinate system diffs)?
+                  // Simpler: 
+                  // North (90deg Math) -> We want plane to point Up.
+                  // East (0deg Math) -> We want plane to point Right.
+                  
+                  // Let's use the standard mapping:
+                  // Target CSS Rotation = 45 - angle.
+                  // North(90): 45 - 90 = -45. Plane(NE) rotates -45 -> North. OK.
+                  // East(0): 45 - 0 = 45. Plane(NE) rotates 45 -> East. OK.
+                  
+                  iconDiv.style.transform = `translate(-50%, -50%) rotate(${45 - angle}deg)`;
               } else {
                   // Keep others horizontal/upright
                   iconDiv.style.transform = `translate(-50%, -50%) rotate(0deg)`;
