@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { TripData, TransportType, Review, TripPoint } from '../types';
-import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send, Globe, Layers, Trash2, Pencil, Check, Share2, Link as LinkIcon, Music, Play, Pause, Volume2, VolumeX } from 'lucide-react';
+import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send, Globe, Layers, Trash2, Pencil, Check, Share2, Link as LinkIcon, Music, Play, Pause, Volume2, VolumeX, Plus, Minus } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, addDoc, query, where, onSnapshot, deleteDoc, updateDoc, doc } from 'firebase/firestore';
 
@@ -354,6 +354,18 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     setMapType(prev => prev === 'ROADMAP' ? 'HYBRID' : 'ROADMAP');
   };
 
+  const handleZoomIn = () => {
+    if (map) {
+        map.setLevel(map.getLevel() - 1, { animate: true });
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (map) {
+        map.setLevel(map.getLevel() + 1, { animate: true });
+    }
+  };
+
   const handleShareTrip = async () => {
       const url = `${window.location.origin}${window.location.pathname}?tripId=${trip.id}`;
       if (navigator.clipboard) {
@@ -511,26 +523,11 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                   const dLat = nextPos.getLat() - currentPos.getLat();
                   const dLng = nextPos.getLng() - currentPos.getLng();
                   
-                  // atan2(y, x). Kakao Lat is Y, Lng is X.
-                  // Returns angle in radians, convert to degrees.
                   const angle = Math.atan2(dLat, dLng) * (180 / Math.PI);
                   
-                  // Plane Emoji ✈️  usually points North-East (45deg).
-                  // CSS rotate is clockwise. Math angle is counter-clockwise.
-                  // We want visual angle = Travel Angle.
-                  // Visual = 45 + Rotation(CSS).
-                  // Travel (Math) = Angle.
-                  // Travel (CSS equiv) = -Angle.
-                  // So 45 + Rotation = -Angle + 90 (Adjustment for coordinate system diffs)?
-                  // Simpler: 
-                  // North (90deg Math) -> We want plane to point Up.
-                  // East (0deg Math) -> We want plane to point Right.
-                  
-                  // Let's use the standard mapping:
-                  // Target CSS Rotation = 45 - angle.
-                  // North(90): 45 - 90 = -45. Plane(NE) rotates -45 -> North. OK.
-                  // East(0): 45 - 0 = 45. Plane(NE) rotates 45 -> East. OK.
-                  
+                  // Plane Emoji ✈️ usually points NE.
+                  // CSS rotate is clockwise, Math angle is counter-clockwise.
+                  // NE (45) + CSS = Angle
                   iconDiv.style.transform = `translate(-50%, -50%) rotate(${45 - angle}deg)`;
               } else {
                   // Keep others horizontal/upright
@@ -634,28 +631,46 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
               </div>
           )}
 
-          <button 
-            onClick={handleShareTrip}
-            className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
-            title="링크 공유"
-          >
-            <LinkIcon size={20} />
-          </button>
-          
-          <button 
-            onClick={toggleMapType}
-            className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
-            title={mapType === 'ROADMAP' ? "위성지도로 보기" : "일반지도로 보기"}
-          >
-            {mapType === 'ROADMAP' ? <Globe size={20} /> : <Layers size={20} />}
-          </button>
+          <div className="flex flex-col gap-2">
+            <button 
+                onClick={handleShareTrip}
+                className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
+                title="링크 공유"
+            >
+                <LinkIcon size={20} />
+            </button>
+            
+            <button 
+                onClick={toggleMapType}
+                className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
+                title={mapType === 'ROADMAP' ? "위성지도로 보기" : "일반지도로 보기"}
+            >
+                {mapType === 'ROADMAP' ? <Globe size={20} /> : <Layers size={20} />}
+            </button>
+            
+            <button 
+                onClick={handleZoomIn}
+                className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
+                title="지도 확대"
+            >
+                <Plus size={20} />
+            </button>
+            
+            <button 
+                onClick={handleZoomOut}
+                className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
+                title="지도 축소"
+            >
+                <Minus size={20} />
+            </button>
 
-          <button 
-            onClick={onClose}
-            className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
-          >
-            <X size={20} className="group-hover:rotate-90 transition-transform" />
-          </button>
+            <button 
+                onClick={onClose}
+                className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
+            >
+                <X size={20} className="group-hover:rotate-90 transition-transform" />
+            </button>
+          </div>
       </div>
 
       {/* 3. Scrollable Content Layer */}
