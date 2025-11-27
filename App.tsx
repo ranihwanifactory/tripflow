@@ -98,18 +98,12 @@ const App: React.FC = () => {
     setFetchError(null);
     try {
       let q;
-      
-      // Logic:
-      // If Tab is 'MINE' and logged in -> Fetch My Trips
-      // If Tab is 'ALL' -> Fetch All Trips (Guest or User wanting to explore)
-      
       if (activeTab === 'MINE' && user) {
          q = query(
             collection(db, 'trips'),
             where('userId', '==', user.uid)
         );
       } else {
-         // Explore Mode (Public)
          q = query(collection(db, 'trips'));
       }
 
@@ -119,9 +113,7 @@ const App: React.FC = () => {
         fetchedTrips.push({ id: doc.id, ...doc.data() } as TripData);
       });
       
-      // Sort client-side (Newest first)
       fetchedTrips.sort((a,b) => b.createdAt - a.createdAt);
-      
       setTrips(fetchedTrips);
     } catch (error: any) {
       console.error("Error fetching trips:", error);
@@ -203,7 +195,6 @@ const App: React.FC = () => {
 
   if (!authInitialized) return <div className="h-screen flex justify-center items-center bg-gray-50"><Loader2 className="animate-spin text-indigo-600" size={48} /></div>;
 
-  // View Routing
   if (view === 'create') {
     return <TripEditor onFinish={() => setView('LIST')} />;
   }
@@ -218,10 +209,7 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans">
-      {/* Install Prompt Modal (Auto triggers) */}
       <InstallPrompt deferredPrompt={deferredPrompt} setDeferredPrompt={setDeferredPrompt} isIOS={isIOS} />
-
-      {/* Auth Modal */}
       {showAuthModal && <Auth onClose={() => setShowAuthModal(false)} />}
 
       <header className="bg-white shadow-sm sticky top-0 z-40 transition-all">
@@ -234,27 +222,18 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center space-x-2 sm:space-x-4">
-             {/* Persistent Install Button (Visible if deferredPrompt exists) */}
              {deferredPrompt && (
-                 <button 
-                    onClick={handleInstallClick}
-                    className="flex items-center bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-indigo-100 transition animate-pulse"
-                 >
+                 <button onClick={handleInstallClick} className="flex items-center bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-indigo-100 transition animate-pulse">
                     <Download size={14} className="mr-1.5" /> 앱 설치
                  </button>
              )}
 
-             <button 
-                onClick={handleShareApp}
-                className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-gray-100 rounded-full transition"
-                title="앱 공유하기"
-             >
+             <button onClick={handleShareApp} className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-gray-100 rounded-full transition" title="앱 공유하기">
                 <Share2 size={20} />
              </button>
 
              <div className="h-6 w-px bg-gray-200 mx-1 sm:mx-2"></div>
 
-             {/* User Controls */}
              {user ? (
                  <div className="flex items-center gap-3">
                      <div className="hidden sm:flex flex-col items-end">
@@ -266,10 +245,7 @@ const App: React.FC = () => {
                      </button>
                  </div>
              ) : (
-                 <button 
-                    onClick={() => setShowAuthModal(true)}
-                    className="flex items-center bg-gray-900 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-800 transition shadow-lg shadow-gray-200"
-                 >
+                 <button onClick={() => setShowAuthModal(true)} className="flex items-center bg-gray-900 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-800 transition shadow-lg shadow-gray-200">
                     <LogIn size={16} className="mr-2" /> <span className="hidden sm:inline">로그인</span>
                  </button>
              )}
@@ -279,63 +255,32 @@ const App: React.FC = () => {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
-        {/* Top Banner & Tabs */}
         <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
           <div>
             <h2 className="text-2xl font-bold text-gray-800 flex items-center">
-                {activeTab === 'MINE' ? (
-                    <><UserIcon size={24} className="mr-2 text-indigo-500"/> 나의 여행 기록</>
-                ) : (
-                    <><Compass size={24} className="mr-2 text-indigo-500"/> 여행지 둘러보기</>
-                )}
+                {activeTab === 'MINE' ? <><UserIcon size={24} className="mr-2 text-indigo-500"/> 나의 여행 기록</> : <><Compass size={24} className="mr-2 text-indigo-500"/> 여행지 둘러보기</>}
             </h2>
-            <p className="text-gray-500 text-sm mt-1">
-                {activeTab === 'MINE' 
-                    ? '내가 기록한 멋진 여행의 추억들을 관리하세요.' 
-                    : '다른 여행자들의 발자취를 따라가보세요.'}
-            </p>
+            <p className="text-gray-500 text-sm mt-1">{activeTab === 'MINE' ? '내가 기록한 멋진 여행의 추억들을 관리하세요.' : '다른 여행자들의 발자취를 따라가보세요.'}</p>
           </div>
           
-          <button 
-            onClick={handleCreateTripClick}
-            className="w-full sm:w-auto flex items-center justify-center bg-indigo-600 text-white px-5 py-3 rounded-xl hover:bg-indigo-700 transition shadow-lg hover:shadow-indigo-500/30 font-bold transform hover:-translate-y-0.5 active:translate-y-0"
-          >
+          <button onClick={handleCreateTripClick} className="w-full sm:w-auto flex items-center justify-center bg-indigo-600 text-white px-5 py-3 rounded-xl hover:bg-indigo-700 transition shadow-lg hover:shadow-indigo-500/30 font-bold transform hover:-translate-y-0.5 active:translate-y-0">
             <Plus size={20} className="mr-2" /> 여행 기록하기
           </button>
         </div>
 
-        {/* Tab Navigation */}
         <div className="flex border-b border-gray-200 mb-8">
-            <button
-                onClick={() => setActiveTab('ALL')}
-                className={`px-6 py-3 text-sm font-bold flex items-center transition-all ${
-                    activeTab === 'ALL' 
-                    ? 'text-indigo-600 border-b-2 border-indigo-600' 
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-            >
+            <button onClick={() => setActiveTab('ALL')} className={`px-6 py-3 text-sm font-bold flex items-center transition-all ${activeTab === 'ALL' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}>
                 <Globe size={16} className="mr-2"/> 둘러보기
             </button>
-            
             {user && (
-                <button
-                    onClick={() => setActiveTab('MINE')}
-                    className={`px-6 py-3 text-sm font-bold flex items-center transition-all ${
-                        activeTab === 'MINE' 
-                        ? 'text-indigo-600 border-b-2 border-indigo-600' 
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                >
+                <button onClick={() => setActiveTab('MINE')} className={`px-6 py-3 text-sm font-bold flex items-center transition-all ${activeTab === 'MINE' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}>
                     <UserIcon size={16} className="mr-2"/> 내 여행
                 </button>
             )}
         </div>
 
-        {/* Content List */}
         {isLoadingTrips ? (
-           <div className="flex justify-center py-20">
-               <Loader2 className="animate-spin text-indigo-600" size={32} />
-           </div>
+           <div className="flex justify-center py-20"><Loader2 className="animate-spin text-indigo-600" size={32} /></div>
         ) : fetchError ? (
            <div className="bg-red-50 border border-red-200 rounded-xl p-8 text-center max-w-lg mx-auto">
                <AlertCircle size={32} className="text-red-500 mx-auto mb-3"/>
@@ -344,21 +289,10 @@ const App: React.FC = () => {
            </div>
         ) : trips.length === 0 ? (
           <div className="text-center py-20 bg-white rounded-2xl shadow-sm border border-dashed border-gray-300">
-            <div className="bg-gray-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Map size={32} className="text-gray-400" />
-            </div>
-            <h3 className="text-gray-800 font-bold text-lg mb-1">
-                {activeTab === 'MINE' ? '아직 기록된 여행이 없습니다' : '등록된 여행이 없습니다'}
-            </h3>
-            <p className="text-gray-500 mb-6">
-                {activeTab === 'MINE' ? '첫 번째 여행을 기록하고 추억을 남겨보세요!' : '가장 먼저 여행 지도를 공유해보세요!'}
-            </p>
-            <button 
-                onClick={handleCreateTripClick}
-                className="text-indigo-600 font-bold hover:underline"
-            >
-                지금 작성하기 &rarr;
-            </button>
+            <div className="bg-gray-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4"><Map size={32} className="text-gray-400" /></div>
+            <h3 className="text-gray-800 font-bold text-lg mb-1">{activeTab === 'MINE' ? '아직 기록된 여행이 없습니다' : '등록된 여행이 없습니다'}</h3>
+            <p className="text-gray-500 mb-6">{activeTab === 'MINE' ? '첫 번째 여행을 기록하고 추억을 남겨보세요!' : '가장 먼저 여행 지도를 공유해보세요!'}</p>
+            <button onClick={handleCreateTripClick} className="text-indigo-600 font-bold hover:underline">지금 작성하기 &rarr;</button>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -368,29 +302,17 @@ const App: React.FC = () => {
                 onClick={() => { setSelectedTrip(trip); setView('VIEW'); }}
                 className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer overflow-hidden border border-gray-100 group relative flex flex-col h-full transform hover:-translate-y-1"
               >
-                {/* Edit/Delete Controls - Only for Owner */}
                 {user && user.uid === trip.userId && (
                     <div className="absolute top-3 right-3 z-10 flex space-x-1.5 opacity-0 group-hover:opacity-100 transition-opacity translate-y-2 group-hover:translate-y-0 duration-300">
-                        <button 
-                            onClick={(e) => handleEditTrip(e, trip)}
-                            className="p-2 bg-white/90 hover:bg-white text-indigo-600 rounded-full shadow-lg backdrop-blur hover:text-indigo-700"
-                            title="수정"
-                        >
-                            <Pencil size={16} />
-                        </button>
-                        <button 
-                            onClick={(e) => trip.id && handleDeleteTrip(e, trip.id)}
-                            className="p-2 bg-white/90 hover:bg-white text-red-500 rounded-full shadow-lg backdrop-blur hover:text-red-600"
-                            title="삭제"
-                        >
-                            <Trash2 size={16} />
-                        </button>
+                        <button onClick={(e) => handleEditTrip(e, trip)} className="p-2 bg-white/90 hover:bg-white text-indigo-600 rounded-full shadow-lg backdrop-blur hover:text-indigo-700" title="수정"><Pencil size={16} /></button>
+                        <button onClick={(e) => trip.id && handleDeleteTrip(e, trip.id)} className="p-2 bg-white/90 hover:bg-white text-red-500 rounded-full shadow-lg backdrop-blur hover:text-red-600" title="삭제"><Trash2 size={16} /></button>
                     </div>
                 )}
 
                 <div className="h-52 overflow-hidden relative bg-gray-200">
+                   {/* Priority: Thumbnail -> First Point Photo -> Default */}
                    <img 
-                    src={trip.points[0]?.photoUrl || 'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'} 
+                    src={trip.thumbnailUrl || trip.points[0]?.photoUrl || 'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'} 
                     alt={trip.title} 
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                     onError={(e) => {
@@ -401,40 +323,27 @@ const App: React.FC = () => {
                    <div className="absolute bottom-0 left-0 p-5 text-white w-full">
                       <h3 className="text-xl font-bold leading-tight mb-1 shadow-black drop-shadow-md">{trip.title}</h3>
                       <div className="flex items-center text-xs opacity-90 font-medium">
-                         <span className="bg-white/20 px-2 py-0.5 rounded backdrop-blur-sm mr-2">
-                             {new Date(trip.createdAt).toLocaleDateString()}
-                         </span>
+                         <span className="bg-white/20 px-2 py-0.5 rounded backdrop-blur-sm mr-2">{new Date(trip.createdAt).toLocaleDateString()}</span>
                          {activeTab === 'ALL' && <span className="text-white/70">by {trip.userId.slice(0,5)}...</span>}
                       </div>
                    </div>
                 </div>
                 
                 <div className="p-5 flex-1 flex flex-col">
-                  <div className="flex items-center text-xs font-bold text-indigo-600 mb-3 bg-indigo-50 w-fit px-2 py-1 rounded">
-                    <MapPin size={12} className="mr-1" />
-                    {trip.points.length}개의 체크포인트
-                  </div>
-                  <p className="text-gray-600 text-sm leading-relaxed line-clamp-3 mb-4 flex-1">
-                    {trip.points[0]?.description || '작성된 설명이 없습니다.'}
-                  </p>
-                  
+                  <div className="flex items-center text-xs font-bold text-indigo-600 mb-3 bg-indigo-50 w-fit px-2 py-1 rounded"><MapPin size={12} className="mr-1" />{trip.points.length}개의 체크포인트</div>
+                  <p className="text-gray-600 text-sm leading-relaxed line-clamp-3 mb-4 flex-1">{trip.points[0]?.description || '작성된 설명이 없습니다.'}</p>
                   <div className="mt-auto pt-4 border-t border-gray-100 flex justify-between items-center">
                     <div className="flex -space-x-2">
-                         {/* Mini avatars of locations */}
                          {trip.points.slice(0,3).map((p, i) => (
                              <div key={i} className="w-6 h-6 rounded-full border-2 border-white bg-gray-200 overflow-hidden">
                                  <img src={p.photoUrl} className="w-full h-full object-cover" alt="" />
                              </div>
                          ))}
                          {trip.points.length > 3 && (
-                             <div className="w-6 h-6 rounded-full border-2 border-white bg-gray-100 flex items-center justify-center text-[8px] text-gray-500 font-bold">
-                                 +{trip.points.length - 3}
-                             </div>
+                             <div className="w-6 h-6 rounded-full border-2 border-white bg-gray-100 flex items-center justify-center text-[8px] text-gray-500 font-bold">+{trip.points.length - 3}</div>
                          )}
                     </div>
-                    <span className="text-indigo-600 text-sm font-bold group-hover:translate-x-1 transition-transform inline-flex items-center">
-                        떠나기 &rarr;
-                    </span>
+                    <span className="text-indigo-600 text-sm font-bold group-hover:translate-x-1 transition-transform inline-flex items-center">떠나기 &rarr;</span>
                   </div>
                 </div>
               </div>

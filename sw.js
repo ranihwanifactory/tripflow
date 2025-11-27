@@ -1,10 +1,11 @@
 
-const CACHE_NAME = 'tripflow-v2';
+const CACHE_NAME = 'tripflow-v3';
+// Only cache critical files. Do NOT cache 'logo.png' here if it doesn't exist, 
+// as it will cause the Service Worker installation to fail entirely.
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
-  '/manifest.json',
-  '/logo.png'
+  '/manifest.json'
 ];
 
 // Install Event: Cache assets

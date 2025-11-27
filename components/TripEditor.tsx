@@ -4,7 +4,7 @@ import { TripPoint, TransportType, TripData, BgmType } from '../types';
 import { db, auth, storage } from '../firebase';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X, MapPin, AlertCircle, Music, Youtube, FileAudio, ChevronDown, ChevronUp, Crosshair } from 'lucide-react';
+import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X, MapPin, AlertCircle, Music, Youtube, FileAudio, ChevronDown, ChevronUp, Crosshair, Camera } from 'lucide-react';
 
 interface TripEditorProps {
   onFinish: () => void;
@@ -40,6 +40,11 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingPoint, setIsUploadingPoint] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
+
+  // Thumbnail State
+  const [thumbnailUrl, setThumbnailUrl] = useState('');
+  const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
+  const [thumbnailPreview, setThumbnailPreview] = useState('');
 
   // BGM State
   const [bgmType, setBgmType] = useState<BgmType>('NONE');
@@ -79,6 +84,11 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
           setBgmUrl(initialData.bgmUrl || '');
           setIsBgmPanelOpen(true);
       }
+
+      if (initialData.thumbnailUrl) {
+          setThumbnailUrl(initialData.thumbnailUrl);
+          setThumbnailPreview(initialData.thumbnailUrl);
+      }
     }
   }, [initialData]);
 
@@ -103,7 +113,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     setMarker(newMarker);
 
     // --- GEOLOCATION LOGIC START ---
-    // If it's a new trip (no initial data), try to get user's current location
+    // If it's a new trip (no initial data), try to get user's current location immediately
     if (!initialData && navigator.geolocation) {
         setIsLocating(true);
         navigator.geolocation.getCurrentPosition(
@@ -137,14 +147,12 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     }
     // --- GEOLOCATION LOGIC END ---
 
-    // FIX: Resize Observer to handle container size changes
     const resizeObserver = new ResizeObserver(() => {
         newMap.relayout();
         newMap.setCenter(newMap.getCenter());
     });
     resizeObserver.observe(mapRef.current);
 
-    // Initial relayout to ensure full rendering
     setTimeout(() => newMap.relayout(), 500);
 
     window.kakao.maps.event.addListener(newMap, 'click', (mouseEvent: any) => {
@@ -177,7 +185,6 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
 
   const updatePolyline = (targetMap: any, tripPoints: TripPoint[]) => {
       if (tripPoints.length < 2) return;
-      // Sort before drawing
       const sorted = [...tripPoints].sort(robustSort);
       const linePath = sorted.map(p => new window.kakao.maps.LatLng(p.lat, p.lng));
       
@@ -188,7 +195,6 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
         strokeOpacity: 0.8,
         strokeStyle: 'solid'
       });
-      // Note: In a production app, we should clear previous polylines properly
       polyline.setMap(targetMap);
   };
 
@@ -201,19 +207,24 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     }
   };
 
-  const handleBgmFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleThumbnailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files[0]) {
-          setBgmFile(e.target.files[0]);
-          setBgmUrl(''); // Clear URL if file selected
+          const file = e.target.files[0];
+          setThumbnailFile(file);
+          setThumbnailPreview(URL.createObjectURL(file));
       }
   };
 
-  // Helper to extract YouTube ID
+  const handleBgmFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (e.target.files && e.target.files[0]) {
+          setBgmFile(e.target.files[0]);
+          setBgmUrl(''); 
+      }
+  };
+
   const extractYoutubeId = (url: string) => {
-    // If it's already an ID (11 chars, alphanumeric + _ -)
     const idRegex = /^[a-zA-Z0-9_-]{11}$/;
     if (idRegex.test(url)) return url;
-
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
     const match = url.match(regExp);
     return (match && match[2].length === 11) ? match[2] : null;
@@ -262,7 +273,6 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     let finalPhotoUrl = photoUrl;
 
     try {
-      // 1. Handle File Upload
       if (photoFile) {
         const userId = auth.currentUser?.uid || 'anonymous';
         const randomStr = Math.random().toString(36).substring(7);
@@ -273,19 +283,15 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
             const snapshot = await uploadBytes(storageRef, photoFile);
             finalPhotoUrl = await getDownloadURL(snapshot.ref);
         } catch (uploadError: any) {
-            console.error("Firebase Storage Upload Error:", uploadError);
-            console.warn("TIP: Go to Firebase Console > Storage > Rules and change to 'allow read, write: if true;' for development.");
-            
-            // Fallback for unauthorized/permission errors
-            const keywords = ['travel', 'nature', 'road', 'city', 'food'];
+            console.error("Storage Error:", uploadError);
+            // Fallback
+            const keywords = ['travel', 'nature', 'road', 'city'];
             const randomKeyword = keywords[Math.floor(Math.random() * keywords.length)];
             finalPhotoUrl = `https://source.unsplash.com/800x600/?${randomKeyword}&sig=${Math.random()}`;
-            alert(`사진 업로드 권한이 없어 기본 여행 이미지로 대체합니다.\n(Firebase Storage Rules 설정을 확인해주세요)`);
+            alert(`사진 업로드 권한 오류. 기본 이미지로 대체합니다.`);
         }
-      } 
-      // 2. Use Fallback if empty
-      else if (!finalPhotoUrl) {
-        const keywords = ['travel', 'landscape', 'view'];
+      } else if (!finalPhotoUrl) {
+        const keywords = ['travel', 'landscape'];
         const randomKeyword = keywords[Math.floor(Math.random() * keywords.length)];
         finalPhotoUrl = `https://source.unsplash.com/800x600/?${randomKeyword}&sig=${Math.random()}`;
       }
@@ -309,23 +315,20 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       } else {
         const newPoint: TripPoint = {
             id: Date.now().toString(),
-            order: 0, // Placeholder
+            order: 0,
             ...pointData
         };
         updatedPoints = [...points, newPoint];
       }
 
-      // CRITICAL: Robust Sort chronologically by date
       updatedPoints.sort(robustSort);
-      
-      // Reassign order
       updatedPoints = updatedPoints.map((p, idx) => ({ ...p, order: idx }));
 
       setPoints(updatedPoints);
       clearForm();
 
     } catch (error) {
-      console.error("Error processing point:", error);
+      console.error(error);
       alert("지점 저장 중 오류가 발생했습니다.");
     } finally {
       setIsUploadingPoint(false);
@@ -334,7 +337,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
 
   const handleSaveTrip = async () => {
     if (!auth.currentUser) {
-        alert("로그인이 세션이 만료되었습니다. 다시 로그인해주세요.");
+        alert("로그인 세션이 만료되었습니다. 다시 로그인해주세요.");
         return;
     }
     if (!tripTitle) return alert('여행 제목을 입력해주세요.');
@@ -342,9 +345,18 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     
     setIsSaving(true);
     let finalBgmUrl = bgmUrl;
+    let finalThumbnailUrl = thumbnailUrl;
 
     try {
-      // Upload BGM File if exists
+      // 1. Upload Thumbnail if file exists
+      if (thumbnailFile) {
+          const userId = auth.currentUser.uid;
+          const storageRef = ref(storage, `trip_thumbnails/${userId}/${Date.now()}_thumb`);
+          const snapshot = await uploadBytes(storageRef, thumbnailFile);
+          finalThumbnailUrl = await getDownloadURL(snapshot.ref);
+      }
+
+      // 2. Upload BGM if file exists
       if (bgmType === 'FILE' && bgmFile) {
           setIsUploadingBgm(true);
           const userId = auth.currentUser.uid;
@@ -356,18 +368,18 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
           if (videoId) {
               finalBgmUrl = videoId;
           } else {
-              alert("유효하지 않은 YouTube URL (또는 ID) 입니다.");
+              alert("유효하지 않은 YouTube URL 입니다.");
               setIsSaving(false);
               return;
           }
       }
 
-      // FORCE FINAL SORT before saving to DB
       const finalPoints = [...points].sort(robustSort).map((p, idx) => ({ ...p, order: idx }));
 
       const tripData = {
         userId: auth.currentUser.uid,
         title: tripTitle,
+        thumbnailUrl: finalThumbnailUrl,
         points: finalPoints,
         bgmType,
         bgmUrl: finalBgmUrl,
@@ -385,7 +397,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       onFinish();
     } catch (e) {
       console.error(e);
-      alert('저장 중 오류가 발생했습니다. (Firestore Rules를 확인해주세요)');
+      alert('저장 중 오류가 발생했습니다.');
     } finally {
       setIsSaving(false);
       setIsUploadingBgm(false);
@@ -394,10 +406,10 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
 
   return (
     <div className="flex flex-col h-screen md:flex-row bg-gray-50">
-      {/* Sidebar - Fixed Layout */}
+      {/* Sidebar */}
       <div className="w-full md:w-[420px] bg-white shadow-xl z-20 flex flex-col h-full border-r border-gray-200">
         
-        {/* 1. Header Area (Fixed) */}
+        {/* Header Area */}
         <div className="p-5 border-b bg-white z-10 space-y-3">
             <div className="flex items-center">
                 <button onClick={onFinish} className="mr-3 p-2 hover:bg-gray-100 rounded-full transition">
@@ -417,7 +429,23 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                 />
             </div>
 
-            {/* BGM Configuration Toggle */}
+            {/* Thumbnail Upload */}
+            <div className="relative border rounded-lg overflow-hidden h-32 bg-gray-100 group cursor-pointer">
+                {thumbnailPreview ? (
+                    <img src={thumbnailPreview} alt="Cover" className="w-full h-full object-cover" />
+                ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                        <Camera size={24} className="mb-2"/>
+                        <span className="text-xs">대표 커버 이미지 설정</span>
+                    </div>
+                )}
+                <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" accept="image/*" onChange={handleThumbnailChange} />
+                <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <span className="text-white text-xs font-bold border border-white px-2 py-1 rounded">이미지 변경</span>
+                </div>
+            </div>
+
+            {/* BGM Config */}
             <div className="border rounded-lg bg-gray-50 overflow-hidden">
                 <button 
                     onClick={() => setIsBgmPanelOpen(!isBgmPanelOpen)}
@@ -462,7 +490,6 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                                     value={bgmUrl}
                                     onChange={(e) => setBgmUrl(e.target.value)}
                                 />
-                                <p className="text-[10px] text-gray-400 mt-1">* ID(예: dQw4w9WgXcQ) 또는 전체 URL 입력 가능</p>
                             </div>
                         )}
 
@@ -474,7 +501,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                                     accept="audio/*"
                                     onChange={handleBgmFileChange}
                                 />
-                                {bgmUrl && !bgmFile && <p className="text-[10px] text-green-600 mt-1">✓ 기존 파일이 저장되어 있습니다.</p>}
+                                {bgmUrl && !bgmFile && <p className="text-[10px] text-green-600 mt-1">✓ 기존 파일 유지</p>}
                             </div>
                         )}
                     </div>
@@ -482,17 +509,15 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
             </div>
         </div>
 
-        {/* 2. Registered List Area (Fixed Height, Scrollable) */}
+        {/* Registered List */}
         <div className="bg-gray-50 border-b flex-shrink-0">
              <div className="px-5 py-3 flex justify-between items-center bg-gray-100/50">
                 <h4 className="font-bold text-gray-600 text-sm flex items-center">
                     <MapPin size={14} className="mr-1"/> 등록된 경로 ({points.length})
-                    <span className="text-[10px] text-gray-400 font-normal ml-2">(시간순 자동정렬됨)</span>
                 </h4>
-                <span className="text-xs text-indigo-500 font-medium bg-indigo-50 px-2 py-0.5 rounded">수정하려면 클릭</span>
              </div>
              
-             <div className="max-h-[220px] overflow-y-auto p-4 space-y-2 custom-scrollbar">
+             <div className="max-h-[200px] overflow-y-auto p-4 space-y-2 custom-scrollbar">
                 {points.length === 0 && (
                     <div className="text-center py-6 border-2 border-dashed border-gray-300 rounded-lg bg-white">
                         <MapPin className="mx-auto text-gray-300 mb-2" />
@@ -515,17 +540,13 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                                     <h5 className="font-bold text-sm text-gray-800 truncate">
                                         {p.title}
                                     </h5>
-                                    <p className="text-[10px] text-blue-600 font-bold mt-0.5 flex items-center">
-                                        <ClockIcon size={10} className="mr-1"/>
-                                        {new Date(p.date).toLocaleString([], {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'})}
-                                    </p>
+                                    <p className="text-[10px] text-blue-600 font-bold mt-0.5">{new Date(p.date).toLocaleString()}</p>
                                 </div>
                                 <button 
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         if(window.confirm('삭제하시겠습니까?')) {
                                             const filtered = points.filter(pt => pt.id !== p.id);
-                                            // Sort after delete just in case
                                             filtered.sort(robustSort);
                                             const reordered = filtered.map((pt, i) => ({...pt, order: i}));
                                             setPoints(reordered);
@@ -537,16 +558,15 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                                     <Trash2 size={14} />
                                 </button>
                             </div>
-                            <p className="text-xs text-gray-500 truncate mt-0.5">{p.locationName}</p>
                         </div>
                     </div>
                 ))}
              </div>
         </div>
 
-        {/* 3. Input Form Area (Scrollable) */}
+        {/* Input Form */}
         <div className="flex-1 overflow-y-auto p-5 bg-white">
-            <div className={`p-4 rounded-xl border transition-all ${editingPointId ? 'border-yellow-400 bg-yellow-50/30 shadow-inner' : 'border-indigo-100 bg-indigo-50/30'}`}>
+            <div className={`p-4 rounded-xl border transition-all ${editingPointId ? 'border-yellow-400 bg-yellow-50/30' : 'border-indigo-100 bg-indigo-50/30'}`}>
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="font-bold text-gray-800 flex items-center text-sm">
                         {editingPointId ? 
@@ -620,7 +640,6 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                         />
                     </div>
 
-                    {/* Photo Upload */}
                     <div>
                          <label className="block text-xs font-medium text-gray-500 mb-1">사진 (파일 또는 URL)</label>
                          <div className="space-y-2">
@@ -661,9 +680,6 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                                     setPhotoFile(null);
                                 }}
                             />
-                            <p className="text-[10px] text-gray-400 flex items-center">
-                                <AlertCircle size={10} className="mr-1"/> 파일 업로드가 안될 경우 URL을 입력하거나 Firebase Rules를 확인하세요.
-                            </p>
                          </div>
                     </div>
 
@@ -681,7 +697,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
             </div>
         </div>
         
-        {/* 4. Footer Save Action */}
+        {/* Footer */}
         <div className="p-4 bg-white border-t">
             <button 
             onClick={handleSaveTrip}
@@ -704,20 +720,9 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                 <span className="text-sm font-bold text-gray-700">현재 위치를 찾는 중...</span>
              </div>
         )}
-        <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur px-4 py-3 rounded-xl shadow-lg border border-white/20">
-          <p className="text-sm font-bold text-indigo-900 flex items-center">
-            <MapPin size={16} className="mr-2 text-indigo-600"/>
-            지도에서 위치를 클릭하여 추가하세요
-          </p>
-        </div>
       </div>
     </div>
   );
 };
-
-// Helper Icon
-const ClockIcon = ({size, className}: {size:number, className?:string}) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-);
 
 export default TripEditor;

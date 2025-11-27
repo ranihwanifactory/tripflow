@@ -10,7 +10,6 @@ interface TripViewerProps {
   onClose: () => void;
 }
 
-// Reduced multiplier for immediate snappy scrolling
 const SCROLL_HEIGHT_MULTIPLIER = 1.2;
 
 const getTransportIcon = (type: TransportType) => {
@@ -37,7 +36,6 @@ const getTransportLabel = (type: TransportType) => {
     }
   };
 
-// Duplicated robust sort to ensure View is consistent even if DB data isn't perfectly sorted
 const robustSort = (a: TripPoint, b: TripPoint) => {
     const timeA = new Date(a.date).getTime();
     const timeB = new Date(b.date).getTime();
@@ -48,8 +46,6 @@ const robustSort = (a: TripPoint, b: TripPoint) => {
     if (strComp !== 0) return strComp;
     return a.id.localeCompare(b.id);
 };
-
-// --- Curve Helper Functions ---
 
 const getQuadraticBezierPoint = (t: number, p0: any, p1: any, p2: any) => {
     const x = (1 - t) * (1 - t) * p0.getLng() + 2 * (1 - t) * t * p1.getLng() + t * t * p2.getLng();
@@ -94,30 +90,25 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   
   const [mapType, setMapType] = useState<'ROADMAP' | 'HYBRID'>('HYBRID');
 
-  // Review State
   const [reviews, setReviews] = useState<Review[]>([]);
   const [newRating, setNewRating] = useState(5);
   const [newComment, setNewComment] = useState('');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
-  // Edit Review State
   const [editingReviewId, setEditingReviewId] = useState<string | null>(null);
   const [editReviewText, setEditReviewText] = useState('');
   const [editReviewRating, setEditReviewRating] = useState(5);
 
-  // BGM State
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const youtubePlayerRef = useRef<any>(null);
 
-  // 0. Sort points chronologically
   const sortedPoints = useMemo(() => {
     if (!trip || !trip.points) return [];
     return [...trip.points].sort(robustSort);
   }, [trip]);
 
-  // Memoize path segments
   const pathSegments = useMemo(() => {
     if (!window.kakao || !window.kakao.maps || sortedPoints.length < 2) return [];
 
@@ -145,11 +136,9 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   }, [pathSegments]);
 
 
-  // BGM Logic
   useEffect(() => {
     if (!trip.bgmType || trip.bgmType === 'NONE' || !trip.bgmUrl) return;
 
-    // Cleanup previous player
     if (youtubePlayerRef.current) {
         youtubePlayerRef.current.destroy();
         youtubePlayerRef.current = null;
@@ -164,7 +153,6 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         audio.loop = true;
         audio.volume = 0.5;
         audioRef.current = audio;
-        // Attempt autoplay
         audio.play().then(() => setIsPlaying(true)).catch(e => console.log("Autoplay blocked:", e));
         
         return () => {
@@ -184,7 +172,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                     'playsinline': 1,
                     'controls': 0,
                     'loop': 1,
-                    'playlist': trip.bgmUrl, // required for loop
+                    'playlist': trip.bgmUrl, 
                     'origin': window.location.origin
                 },
                 events: {
@@ -207,7 +195,6 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         if (window.YT && window.YT.Player) {
             initPlayer();
         } else {
-            // Load API only if not loaded
             if (!document.getElementById('youtube-iframe-api')) {
                 const tag = document.createElement('script');
                 tag.id = 'youtube-iframe-api';
@@ -215,7 +202,6 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                 const firstScriptTag = document.getElementsByTagName('script')[0];
                 firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
             }
-            // Overwriting onYouTubeIframeAPIReady is risky if multiple components do it, but here it's fine
             window.onYouTubeIframeAPIReady = initPlayer;
         }
 
@@ -238,7 +224,6 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
               setIsPlaying(true);
           }
       } else if (trip.bgmType === 'YOUTUBE' && youtubePlayerRef.current) {
-          // YT Player might not be ready
           if (typeof youtubePlayerRef.current.getPlayerState !== 'function') return;
 
           if (isPlaying) {
@@ -265,8 +250,6 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       }
   };
 
-
-  // Fetch Reviews
   useEffect(() => {
     if(!trip.id) return;
     const q = query(
@@ -276,14 +259,12 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const fetchedReviews: Review[] = [];
         snapshot.forEach(doc => fetchedReviews.push({ id: doc.id, ...doc.data() } as Review));
-        // Sort client side
         fetchedReviews.sort((a, b) => b.createdAt - a.createdAt);
         setReviews(fetchedReviews);
     });
     return unsubscribe;
   }, [trip.id]);
 
-  // Submit Review
   const handleSubmitReview = async () => {
     if (!auth.currentUser) {
         alert("로그인이 필요한 기능입니다.");
@@ -376,7 +357,6 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       }
   };
 
-  // 1. Initialize Map
   useEffect(() => {
     if (!mapRef.current || sortedPoints.length === 0) return;
 
@@ -500,8 +480,6 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       
       if (safeIndex >= 0 && safeIndex < pathSegments.length) {
           const segment = pathSegments[safeIndex];
-          
-          // Calculate current position
           const currentPos = getQuadraticBezierPoint(sectionProgress, segment.start, segment.control, segment.end);
           transportOverlay.setPosition(currentPos);
           map.panTo(currentPos);
@@ -514,23 +492,14 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                   iconDiv.innerText = iconChar;
               }
 
-              // Special rotation for PLANE
               if (transportMode === 'PLANE') {
-                  // Look ahead further (0.05 -> 0.1) to get stable direction
                   const nextT = Math.min(sectionProgress + 0.1, 1);
                   const nextPos = getQuadraticBezierPoint(nextT, segment.start, segment.control, segment.end);
-                  
                   const dLat = nextPos.getLat() - currentPos.getLat();
                   const dLng = nextPos.getLng() - currentPos.getLng();
-                  
                   const angle = Math.atan2(dLat, dLng) * (180 / Math.PI);
-                  
-                  // Plane Emoji ✈️ usually points NE.
-                  // CSS rotate is clockwise, Math angle is counter-clockwise.
-                  // NE (45) + CSS = Angle
                   iconDiv.style.transform = `translate(-50%, -50%) rotate(${45 - angle}deg)`;
               } else {
-                  // Keep others horizontal/upright
                   iconDiv.style.transform = `translate(-50%, -50%) rotate(0deg)`;
               }
           }
@@ -596,7 +565,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   return (
     <div className="fixed inset-0 z-50 bg-black font-sans">
       
-      {/* 1. Background Map Layer */}
+      {/* Background Map Layer */}
       <div className="fixed inset-0 z-0 bg-black">
         <div 
             ref={mapRef} 
@@ -605,20 +574,18 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/80 pointer-events-none" />
       </div>
 
-      {/* Hidden YouTube Player */}
       <div id="youtube-player" className="hidden" />
 
-      {/* 2. Top Controls */}
+      {/* Top Controls */}
       <div className="fixed top-6 right-6 z-50 flex gap-4 items-start">
           
-          {/* BGM Player Widget */}
           {trip.bgmType && trip.bgmType !== 'NONE' && (
               <div className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-2 rounded-full border border-white/20 shadow-lg flex items-center space-x-2 pr-4 transition-all">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isPlaying ? 'bg-indigo-500 animate-pulse' : 'bg-gray-600'}`}>
                       <Music size={14} className={isPlaying ? 'animate-spin-slow' : ''} />
                   </div>
                   <div className="flex flex-col">
-                      <span className="text-[10px] text-gray-300 uppercase tracking-wider font-bold">Background Music</span>
+                      <span className="text-[10px] text-gray-300 uppercase tracking-wider font-bold">BGM</span>
                       <div className="flex items-center space-x-3">
                         <button onClick={togglePlay} className="hover:text-indigo-400 transition">
                             {isPlaying ? <Pause size={16} fill="currentColor"/> : <Play size={16} fill="currentColor"/>}
@@ -632,54 +599,39 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
           )}
 
           <div className="flex flex-col gap-2">
-            <button 
-                onClick={handleShareTrip}
-                className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
-                title="링크 공유"
-            >
+            <button onClick={handleShareTrip} className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group">
                 <LinkIcon size={20} />
             </button>
-            
-            <button 
-                onClick={toggleMapType}
-                className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
-                title={mapType === 'ROADMAP' ? "위성지도로 보기" : "일반지도로 보기"}
-            >
+            <button onClick={toggleMapType} className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group">
                 {mapType === 'ROADMAP' ? <Globe size={20} /> : <Layers size={20} />}
             </button>
-            
-            <button 
-                onClick={handleZoomIn}
-                className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
-                title="지도 확대"
-            >
+            <button onClick={handleZoomIn} className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group">
                 <Plus size={20} />
             </button>
-            
-            <button 
-                onClick={handleZoomOut}
-                className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
-                title="지도 축소"
-            >
+            <button onClick={handleZoomOut} className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group">
                 <Minus size={20} />
             </button>
-
-            <button 
-                onClick={onClose}
-                className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"
-            >
+            <button onClick={onClose} className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group">
                 <X size={20} className="group-hover:rotate-90 transition-transform" />
             </button>
           </div>
       </div>
 
-      {/* 3. Scrollable Content Layer */}
+      {/* Content Layer */}
       <div 
         ref={scrollContainerRef} 
         className="relative z-10 w-full h-full overflow-y-auto no-scrollbar scroll-smooth"
       >
         {/* Hero Section */}
-        <div className="h-screen w-full flex flex-col justify-center items-center text-center p-8 text-white relative z-20">
+        <div className="h-screen w-full flex flex-col justify-center items-center text-center p-8 text-white relative z-20 overflow-hidden">
+          {/* Hero Background Image */}
+          {trip.thumbnailUrl && (
+              <div className="absolute inset-0 z-[-1]">
+                  <img src={trip.thumbnailUrl} alt="Cover" className="w-full h-full object-cover opacity-60 blur-sm scale-110" />
+                  <div className="absolute inset-0 bg-black/50" />
+              </div>
+          )}
+
           <div className="animate-fade-in-up max-w-4xl">
             <span className="inline-block px-4 py-1 rounded-full border border-white/30 bg-black/30 backdrop-blur-sm text-sm font-light mb-6 tracking-widest uppercase">
               TripFlow Journey
@@ -702,7 +654,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
           </div>
         </div>
 
-        {/* Trip Points Stream */}
+        {/* Trip Points */}
         <div className="w-full">
             {sortedPoints.map((point, idx) => (
             <div 
@@ -724,13 +676,11 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                 className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" 
                             />
                             <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
-                            
                             <div className="absolute top-3 left-3">
                                 <span className="bg-indigo-600 text-white px-2 py-0.5 rounded-full text-xs font-bold border border-white/20 shadow-lg">
                                     STEP {idx + 1}
                                 </span>
                             </div>
-
                             <div className="absolute bottom-0 left-0 p-5 text-white w-full">
                                 <div className="flex items-center text-xs font-bold tracking-wider uppercase mb-1 text-indigo-300">
                                     <Clock size={12} className="mr-1" />
@@ -751,13 +701,11 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                     <p className="text-xs text-gray-400 truncate max-w-[200px]">{point.address}</p>
                                 </div>
                             </div>
-
                             <div className="prose prose-invert max-w-none mb-4">
                                 <p className="text-gray-300 leading-relaxed text-sm md:text-base whitespace-pre-line line-clamp-4">
                                     {point.description}
                                 </p>
                             </div>
-
                             {idx < sortedPoints.length - 1 && (
                                 <div className="border-t border-white/10 pt-3 flex items-center justify-between">
                                     <div className="flex items-center text-gray-500 text-xs font-medium">
@@ -777,7 +725,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
             ))}
         </div>
 
-        {/* Outro & Review Section */}
+        {/* Outro */}
         <div className="min-h-screen flex flex-col justify-start items-center text-white p-4 pt-20 bg-gradient-to-t from-black via-black/90 to-transparent relative z-20 pb-20">
             <h2 className="text-3xl font-bold mb-4 drop-shadow-lg">End of Journey</h2>
             
@@ -798,14 +746,13 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                 </button>
             </div>
 
-             {/* Review & Ratings Section */}
+            {/* Review Section */}
             <div className="w-full max-w-md bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10">
                 <h3 className="text-xl font-bold mb-4 flex items-center">
                     <Star className="text-yellow-400 mr-2" fill="currentColor" size={20} /> 
                     여행자 리뷰 <span className="text-xs font-normal text-white/60 ml-2">({reviews.length})</span>
                 </h3>
 
-                {/* Write Review or Login Prompt */}
                 {auth.currentUser ? (
                     <div className="mb-6 p-4 bg-white/5 rounded-xl border border-white/5">
                         <div className="flex items-center justify-between mb-3">
@@ -831,11 +778,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                 className="flex-1 bg-white/10 border-transparent focus:border-indigo-500 focus:bg-white/20 text-white placeholder-gray-400 rounded-lg px-3 py-2 text-sm transition outline-none"
                                 onKeyDown={(e) => e.key === 'Enter' && handleSubmitReview()}
                             />
-                            <button 
-                                onClick={handleSubmitReview}
-                                disabled={isSubmittingReview}
-                                className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-2 font-bold disabled:opacity-50 transition"
-                            >
+                            <button onClick={handleSubmitReview} disabled={isSubmittingReview} className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-2 font-bold disabled:opacity-50 transition">
                                 <Send size={16} />
                             </button>
                         </div>
@@ -843,16 +786,12 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                 ) : (
                     <div className="mb-6 p-4 bg-indigo-900/30 rounded-xl border border-indigo-500/30 text-center">
                         <p className="text-sm text-indigo-200 mb-2">여행에 대한 감상을 남기고 싶으신가요?</p>
-                        <button 
-                            onClick={() => alert('상단 메뉴에서 로그인해주세요!')} 
-                            className="text-xs font-bold bg-white text-indigo-600 px-3 py-1.5 rounded-full hover:bg-gray-100 transition"
-                        >
+                        <button onClick={() => alert('상단 메뉴에서 로그인해주세요!')} className="text-xs font-bold bg-white text-indigo-600 px-3 py-1.5 rounded-full hover:bg-gray-100 transition">
                             로그인하고 리뷰 쓰기
                         </button>
                     </div>
                 )}
 
-                {/* Review List */}
                 <div className="space-y-3 overflow-y-auto max-h-64 no-scrollbar pr-1">
                     {reviews.length === 0 ? (
                         <p className="text-center text-white/50 py-4 text-xs">아직 작성된 리뷰가 없습니다.</p>
@@ -883,7 +822,6 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                     </div>
                                     <span className="text-[10px] text-white/40">{new Date(review.createdAt).toLocaleDateString()}</span>
                                 </div>
-
                                 {editingReviewId === review.id ? (
                                     <div className="mt-2">
                                         <input 
@@ -894,34 +832,17 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                             autoFocus
                                         />
                                         <div className="flex justify-end gap-2">
-                                            <button onClick={cancelEditing} className="p-1 text-gray-400 hover:text-white rounded bg-white/10">
-                                                <X size={12} />
-                                            </button>
-                                            <button onClick={() => handleUpdateReview(review.id)} className="p-1 text-green-400 hover:text-green-300 rounded bg-green-500/20 border border-green-500/30">
-                                                <Check size={12} />
-                                            </button>
+                                            <button onClick={cancelEditing} className="p-1 text-gray-400 hover:text-white rounded bg-white/10"><X size={12} /></button>
+                                            <button onClick={() => handleUpdateReview(review.id)} className="p-1 text-green-400 hover:text-green-300 rounded bg-green-500/20 border border-green-500/30"><Check size={12} /></button>
                                         </div>
                                     </div>
                                 ) : (
                                     <p className="text-white/80 text-xs ml-8 leading-snug">{review.text}</p>
                                 )}
-
                                 {auth.currentUser?.uid === review.userId && editingReviewId !== review.id && (
                                     <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button 
-                                            onClick={() => startEditing(review)}
-                                            className="p-1 text-gray-400 hover:text-indigo-400 bg-black/50 rounded"
-                                            title="수정"
-                                        >
-                                            <Pencil size={10} />
-                                        </button>
-                                        <button 
-                                            onClick={() => handleDeleteReview(review.id)}
-                                            className="p-1 text-gray-400 hover:text-red-400 bg-black/50 rounded"
-                                            title="삭제"
-                                        >
-                                            <Trash2 size={10} />
-                                        </button>
+                                        <button onClick={() => startEditing(review)} className="p-1 text-gray-400 hover:text-indigo-400 bg-black/50 rounded" title="수정"><Pencil size={10} /></button>
+                                        <button onClick={() => handleDeleteReview(review.id)} className="p-1 text-gray-400 hover:text-red-400 bg-black/50 rounded" title="삭제"><Trash2 size={10} /></button>
                                     </div>
                                 )}
                             </div>
@@ -930,7 +851,6 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                 </div>
             </div>
         </div>
-
       </div>
     </div>
   );

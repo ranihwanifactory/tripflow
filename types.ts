@@ -27,6 +27,7 @@ export interface TripData {
   id?: string;
   userId: string;
   title: string;
+  thumbnailUrl?: string; // Representative cover image
   points: TripPoint[];
   bgmUrl?: string;
   bgmType?: BgmType;

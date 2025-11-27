@@ -13,7 +13,8 @@
     <meta property="og:type" content="website" />
     <meta property="og:title" content="TripFlow - 나의 여행 기록" />
     <meta property="og:description" content="스크롤하며 즐기는 다이나믹한 여행 지도. 당신의 여행을 기록하고 공유하세요." />
-    <meta property="og:image" content="/logo.png" />
+    <!-- Updated OG Image to a travel photo -->
+    <meta property="og:image" content="https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80" />
     <meta property="og:site_name" content="TripFlow" />
 
     <title>TripFlow - 나의 여행 기록</title>
@@ -49,7 +50,7 @@
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('/sw.js')
             .then((registration) => {
-              console.log('ServiceWorker registration successful');
+              console.log('ServiceWorker registration successful with scope: ', registration.scope);
             }, (err) => {
               console.log('ServiceWorker registration failed: ', err);
             });
