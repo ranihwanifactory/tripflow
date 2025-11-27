@@ -4,7 +4,7 @@ import { TripPoint, TransportType, TripData, BgmType } from '../types';
 import { db, auth, storage } from '../firebase';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X, MapPin, AlertCircle, Music, Youtube, FileAudio, ChevronDown, ChevronUp, Crosshair, Camera } from 'lucide-react';
+import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X, MapPin, AlertCircle, Music, Youtube, FileAudio, ChevronDown, ChevronUp, Crosshair, Camera, Lock, Globe } from 'lucide-react';
 
 interface TripEditorProps {
   onFinish: () => void;
@@ -40,6 +40,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingPoint, setIsUploadingPoint] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
+  const [visibility, setVisibility] = useState<'PUBLIC' | 'PRIVATE'>('PUBLIC');
 
   // Thumbnail State
   const [thumbnailUrl, setThumbnailUrl] = useState('');
@@ -88,6 +89,10 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       if (initialData.thumbnailUrl) {
           setThumbnailUrl(initialData.thumbnailUrl);
           setThumbnailPreview(initialData.thumbnailUrl);
+      }
+
+      if (initialData.visibility) {
+          setVisibility(initialData.visibility);
       }
     }
   }, [initialData]);
@@ -350,10 +355,15 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     try {
       // 1. Upload Thumbnail if file exists
       if (thumbnailFile) {
-          const userId = auth.currentUser.uid;
-          const storageRef = ref(storage, `trip_thumbnails/${userId}/${Date.now()}_thumb`);
-          const snapshot = await uploadBytes(storageRef, thumbnailFile);
-          finalThumbnailUrl = await getDownloadURL(snapshot.ref);
+          try {
+              const userId = auth.currentUser.uid;
+              const storageRef = ref(storage, `trip_thumbnails/${userId}/${Date.now()}_thumb`);
+              const snapshot = await uploadBytes(storageRef, thumbnailFile);
+              finalThumbnailUrl = await getDownloadURL(snapshot.ref);
+          } catch (thumbErr) {
+              console.error("Thumbnail upload failed:", thumbErr);
+              alert("커버 이미지 업로드에 실패했습니다. (기본 이미지로 저장됨)");
+          }
       }
 
       // 2. Upload BGM if file exists
@@ -383,6 +393,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
         points: finalPoints,
         bgmType,
         bgmUrl: finalBgmUrl,
+        visibility,
         createdAt: initialData ? initialData.createdAt : Date.now(),
       };
 
@@ -419,18 +430,37 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                     {initialData ? '여행 수정하기' : '새 여행 만들기'}
                 </h2>
             </div>
-            <div>
+            
+            {/* Title & Visibility */}
+            <div className="flex gap-2">
                 <input 
                     type="text" 
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-lg font-bold"
+                    className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-lg font-bold"
                     placeholder="여행 제목 (예: 부산 식도락 여행)"
                     value={tripTitle}
                     onChange={(e) => setTripTitle(e.target.value)}
                 />
             </div>
+            
+            <div className="flex justify-end">
+                <div className="bg-gray-100 p-1 rounded-lg flex text-xs font-bold">
+                    <button 
+                        onClick={() => setVisibility('PUBLIC')}
+                        className={`px-3 py-1.5 rounded-md flex items-center transition-all ${visibility === 'PUBLIC' ? 'bg-white shadow text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                        <Globe size={12} className="mr-1"/> 전체 공개
+                    </button>
+                    <button 
+                        onClick={() => setVisibility('PRIVATE')}
+                        className={`px-3 py-1.5 rounded-md flex items-center transition-all ${visibility === 'PRIVATE' ? 'bg-white shadow text-red-600' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                        <Lock size={12} className="mr-1"/> 나만 보기
+                    </button>
+                </div>
+            </div>
 
-            {/* Thumbnail Upload */}
-            <div className="relative border rounded-lg overflow-hidden h-32 bg-gray-100 group cursor-pointer">
+            {/* Thumbnail Upload (Fixed Click Issue) */}
+            <div className="relative border rounded-lg overflow-hidden h-32 bg-gray-100 group">
                 {thumbnailPreview ? (
                     <img src={thumbnailPreview} alt="Cover" className="w-full h-full object-cover" />
                 ) : (
@@ -439,10 +469,19 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                         <span className="text-xs">대표 커버 이미지 설정</span>
                     </div>
                 )}
-                <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" accept="image/*" onChange={handleThumbnailChange} />
-                <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                
+                {/* Overlay for visual feedback (pointer-events-none essential) */}
+                <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
                     <span className="text-white text-xs font-bold border border-white px-2 py-1 rounded">이미지 변경</span>
                 </div>
+
+                {/* File Input must be on top with z-index */}
+                <input 
+                    type="file" 
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-30" 
+                    accept="image/*" 
+                    onChange={handleThumbnailChange} 
+                />
             </div>
 
             {/* BGM Config */}
