@@ -192,6 +192,15 @@ const App: React.FC = () => {
       }
   };
 
+  const handleInstallClick = async () => {
+      if (deferredPrompt) {
+          deferredPrompt.prompt();
+          const { outcome } = await deferredPrompt.userChoice;
+          console.log(`User response to the install prompt: ${outcome}`);
+          setDeferredPrompt(null);
+      }
+  };
+
   if (!authInitialized) return <div className="h-screen flex justify-center items-center bg-gray-50"><Loader2 className="animate-spin text-indigo-600" size={48} /></div>;
 
   // View Routing
@@ -225,7 +234,16 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center space-x-2 sm:space-x-4">
-             {/* Note: Install button is now handled by the Modal, but we keep Share */}
+             {/* Persistent Install Button (Visible if deferredPrompt exists) */}
+             {deferredPrompt && (
+                 <button 
+                    onClick={handleInstallClick}
+                    className="flex items-center bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-indigo-100 transition animate-pulse"
+                 >
+                    <Download size={14} className="mr-1.5" /> 앱 설치
+                 </button>
+             )}
+
              <button 
                 onClick={handleShareApp}
                 className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-gray-100 rounded-full transition"

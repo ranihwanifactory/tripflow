@@ -14,9 +14,8 @@ const InstallPrompt: React.FC<InstallPromptProps> = ({ deferredPrompt, setDeferr
   useEffect(() => {
     // Show modal automatically if prompt is available OR it's iOS
     if (deferredPrompt || isIOS) {
-      // Small delay for better UX (don't pop up instantly on load)
-      const timer = setTimeout(() => setIsVisible(true), 2000);
-      return () => clearTimeout(timer);
+      // Show immediately without delay
+      setIsVisible(true);
     }
   }, [deferredPrompt, isIOS]);
 

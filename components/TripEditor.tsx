@@ -101,6 +101,36 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     newMarker.setMap(newMap);
     setMarker(newMarker);
 
+    // --- GEOLOCATION LOGIC START ---
+    // If it's a new trip (no initial data), try to get user's current location
+    if (!initialData && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+                const loc = new window.kakao.maps.LatLng(lat, lng);
+                
+                newMap.setCenter(loc);
+                newMarker.setPosition(loc);
+                
+                setCurrentLat(lat);
+                setCurrentLng(lng);
+                
+                // Optional: Try to get address for current location
+                const geocoder = new window.kakao.maps.services.Geocoder();
+                geocoder.coord2Address(lng, lat, (result: any, status: any) => {
+                    if (status === window.kakao.maps.services.Status.OK) {
+                        setAddress(result[0].address.address_name);
+                    }
+                });
+            },
+            (error) => {
+                console.warn("Geolocation failed or denied:", error);
+            }
+        );
+    }
+    // --- GEOLOCATION LOGIC END ---
+
     // FIX: Resize Observer to handle container size changes
     const resizeObserver = new ResizeObserver(() => {
         newMap.relayout();
