@@ -5,16 +5,20 @@ import TripEditor from './components/TripEditor';
 import TripViewer from './components/TripViewer';
 import { auth, db } from './firebase';
 import { User, onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, query, where, getDocs, deleteDoc, doc, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, deleteDoc, doc, getDoc } from 'firebase/firestore';
 import { TripData } from './types';
-import { Map, Plus, LogOut, Loader2, MapPin, Pencil, Trash2, Download, X, Share2, LogIn, User as UserIcon } from 'lucide-react';
+import { Map, Plus, LogOut, Loader2, MapPin, Pencil, Trash2, Download, Share2, LogIn, User as UserIcon, Globe, Compass, AlertCircle } from 'lucide-react';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [authInitialized, setAuthInitialized] = useState(false);
   
   const [view, setView] = useState<'LIST' | 'create' | 'EDIT' | 'VIEW'>('LIST');
+  const [activeTab, setActiveTab] = useState<'MINE' | 'ALL'>('ALL'); // Default to ALL for guests
+  
   const [trips, setTrips] = useState<TripData[]>([]);
+  const [isLoadingTrips, setIsLoadingTrips] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [selectedTrip, setSelectedTrip] = useState<TripData | null>(null);
 
   // Modal States
@@ -24,22 +28,56 @@ const App: React.FC = () => {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBtn, setShowInstallBtn] = useState(false);
 
+  // 1. Auth & PWA Listener & URL Check
   useEffect(() => {
+    // PWA Install Event Listener
+    const handleBeforeInstallPrompt = (e: Event) => {
+      console.log('PWA: beforeinstallprompt event fired');
+      e.preventDefault();
+      setDeferredPrompt(e);
+      // Only show install button if not already running in standalone mode
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+      if (!isStandalone) {
+          setShowInstallBtn(true);
+      }
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setAuthInitialized(true);
-      // Close auth modal if user logs in successfully
-      if (currentUser) setShowAuthModal(false);
+      if (currentUser) {
+          setShowAuthModal(false);
+          // If viewing list, switch to MINE by default only if previously on ALL
+          if (view === 'LIST' && activeTab === 'ALL') {
+             setActiveTab('MINE'); 
+          }
+      } else {
+          setActiveTab('ALL'); // Default to All for guests
+      }
     });
 
-    // PWA Install Event Listener
-    const handleBeforeInstallPrompt = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-      setShowInstallBtn(true);
+    // Check for Direct Link (?tripId=xyz)
+    const checkDirectLink = async () => {
+        const params = new URLSearchParams(window.location.search);
+        const tripId = params.get('tripId');
+        if (tripId) {
+            try {
+                const docRef = doc(db, 'trips', tripId);
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    const tripData = { id: docSnap.id, ...docSnap.data() } as TripData;
+                    setSelectedTrip(tripData);
+                    setView('VIEW');
+                    // Remove param from URL to clean up without reload
+                    window.history.replaceState({}, '', window.location.pathname);
+                }
+            } catch (e) {
+                console.error("Error loading linked trip:", e);
+            }
+        }
     };
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    checkDirectLink();
 
     return () => {
       unsubscribe();
@@ -47,31 +85,33 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Fetch Trips whenever user state changes or view is LIST
+  // 2. Fetch Trips Logic
   useEffect(() => {
     if (authInitialized && view === 'LIST') {
       fetchTrips();
     }
-  }, [user, authInitialized, view]);
+  }, [user, authInitialized, view, activeTab]);
 
   const fetchTrips = async () => {
+    setIsLoadingTrips(true);
+    setFetchError(null);
     try {
       let q;
-      // If logged in, prioritize my trips? Or show all public trips?
-      // Requirement: "Guest sees main screen".
-      // Let's logic: If user is logged in, show THEIR trips (Personal Log).
-      // If guest, show ALL trips (Public Feed).
       
-      if (user) {
+      // Logic:
+      // If Tab is 'MINE' and logged in -> Fetch My Trips
+      // If Tab is 'ALL' -> Fetch All Trips (Guest or User wanting to explore)
+      
+      if (activeTab === 'MINE' && user) {
          q = query(
             collection(db, 'trips'),
             where('userId', '==', user.uid)
         );
       } else {
-        // Guest view: Show all trips (limit to recent 20 for safety if needed, here fetching all)
-        // Ideally should have an index on createdAt.
-        // For now, fetching collection and sorting client-side to avoid "Index Required" error on fresh DBs.
-        q = query(collection(db, 'trips'));
+         // Explore Mode (Public)
+         // NOTE: This requires Firestore Rules to allow 'read' for everyone.
+         // match /trips/{tripId} { allow read: if true; }
+         q = query(collection(db, 'trips'));
       }
 
       const querySnapshot = await getDocs(q);
@@ -80,17 +120,27 @@ const App: React.FC = () => {
         fetchedTrips.push({ id: doc.id, ...doc.data() } as TripData);
       });
       
-      // Sort client-side
+      // Sort client-side (Newest first)
       fetchedTrips.sort((a,b) => b.createdAt - a.createdAt);
       
       setTrips(fetchedTrips);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching trips:", error);
+      if (error.code === 'permission-denied') {
+          setFetchError("데이터를 불러올 권한이 없습니다. Firebase Console에서 Firestore Rules를 확인해주세요. (allow read: if true;)");
+      } else {
+          setFetchError("여행 목록을 불러오는 중 오류가 발생했습니다.");
+      }
+    } finally {
+      setIsLoadingTrips(false);
     }
   };
 
   const handleInstallClick = async () => {
-    if (!deferredPrompt) return;
+    if (!deferredPrompt) {
+        alert("설치 가능한 상태가 아닙니다. (이미 설치되었거나 지원하지 않는 브라우저)");
+        return;
+    }
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
     console.log(`User response to the install prompt: ${outcome}`);
@@ -129,26 +179,25 @@ const App: React.FC = () => {
   const handleSignOut = async () => {
     if(window.confirm("로그아웃 하시겠습니까?")) {
         await signOut(auth);
-        setView('LIST'); // Reset view
+        setView('LIST'); 
+        setActiveTab('ALL'); // Go back to public view
     }
   };
 
   const handleShareApp = async () => {
-      const shareData = {
-          title: 'TripFlow - 여행 지도',
-          text: '나만의 다이나믹한 여행 지도를 만들어보세요!',
-          url: window.location.href
-      };
-
       if (navigator.share) {
           try {
-              await navigator.share(shareData);
+              await navigator.share({
+                  title: 'TripFlow',
+                  text: '나만의 다이나믹한 여행 지도를 만들어보세요!',
+                  url: window.location.origin
+              });
           } catch (err) {
               console.log('Share canceled');
           }
       } else {
           try {
-              await navigator.clipboard.writeText(window.location.href);
+              await navigator.clipboard.writeText(window.location.origin);
               alert('주소가 클립보드에 복사되었습니다.');
           } catch (err) {
               alert('공유하기를 지원하지 않는 브라우저입니다.');
@@ -186,17 +235,16 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center space-x-2 sm:space-x-4">
-             {/* PWA Install Button (Only if prompt available) */}
+             {/* PWA Install Button */}
              {showInstallBtn && (
                  <button 
                     onClick={handleInstallClick}
-                    className="flex items-center text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full hover:bg-indigo-100 transition"
+                    className="flex items-center text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full hover:bg-indigo-100 transition animate-pulse"
                  >
                     <Download size={14} className="mr-1"/> 앱 설치
                  </button>
              )}
 
-             {/* Share Button */}
              <button 
                 onClick={handleShareApp}
                 className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-gray-100 rounded-full transition"
@@ -205,7 +253,7 @@ const App: React.FC = () => {
                 <Share2 size={20} />
              </button>
 
-             <div className="h-6 w-px bg-gray-200 mx-2"></div>
+             <div className="h-6 w-px bg-gray-200 mx-1 sm:mx-2"></div>
 
              {/* User Controls */}
              {user ? (
@@ -221,9 +269,9 @@ const App: React.FC = () => {
              ) : (
                  <button 
                     onClick={() => setShowAuthModal(true)}
-                    className="flex items-center bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-800 transition shadow-lg shadow-gray-200"
+                    className="flex items-center bg-gray-900 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-800 transition shadow-lg shadow-gray-200"
                  >
-                    <LogIn size={16} className="mr-2" /> 로그인
+                    <LogIn size={16} className="mr-2" /> <span className="hidden sm:inline">로그인</span>
                  </button>
              )}
           </div>
@@ -231,21 +279,21 @@ const App: React.FC = () => {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex flex-col sm:flex-row justify-between items-center mb-8 gap-4">
+        
+        {/* Top Banner & Tabs */}
+        <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
           <div>
             <h2 className="text-2xl font-bold text-gray-800 flex items-center">
-                {user ? (
-                    <>
-                        <UserIcon size={24} className="mr-2 text-indigo-500"/> 나의 여행 기록
-                    </>
+                {activeTab === 'MINE' ? (
+                    <><UserIcon size={24} className="mr-2 text-indigo-500"/> 나의 여행 기록</>
                 ) : (
-                    <>
-                        <MapPin size={24} className="mr-2 text-indigo-500"/> 공개된 여행들
-                    </>
+                    <><Compass size={24} className="mr-2 text-indigo-500"/> 여행지 둘러보기</>
                 )}
             </h2>
             <p className="text-gray-500 text-sm mt-1">
-                {user ? '내가 기록한 멋진 여행들을 확인하세요.' : '다른 여행자들의 발자취를 따라가보세요.'}
+                {activeTab === 'MINE' 
+                    ? '내가 기록한 멋진 여행의 추억들을 관리하세요.' 
+                    : '다른 여행자들의 발자취를 따라가보세요.'}
             </p>
           </div>
           
@@ -257,13 +305,55 @@ const App: React.FC = () => {
           </button>
         </div>
 
-        {trips.length === 0 ? (
+        {/* Tab Navigation */}
+        <div className="flex border-b border-gray-200 mb-8">
+            <button
+                onClick={() => setActiveTab('ALL')}
+                className={`px-6 py-3 text-sm font-bold flex items-center transition-all ${
+                    activeTab === 'ALL' 
+                    ? 'text-indigo-600 border-b-2 border-indigo-600' 
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+            >
+                <Globe size={16} className="mr-2"/> 둘러보기
+            </button>
+            
+            {user && (
+                <button
+                    onClick={() => setActiveTab('MINE')}
+                    className={`px-6 py-3 text-sm font-bold flex items-center transition-all ${
+                        activeTab === 'MINE' 
+                        ? 'text-indigo-600 border-b-2 border-indigo-600' 
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                >
+                    <UserIcon size={16} className="mr-2"/> 내 여행
+                </button>
+            )}
+        </div>
+
+        {/* Content List */}
+        {isLoadingTrips ? (
+           <div className="flex justify-center py-20">
+               <Loader2 className="animate-spin text-indigo-600" size={32} />
+           </div>
+        ) : fetchError ? (
+           <div className="bg-red-50 border border-red-200 rounded-xl p-8 text-center max-w-lg mx-auto">
+               <AlertCircle size={32} className="text-red-500 mx-auto mb-3"/>
+               <h3 className="text-red-800 font-bold mb-2">데이터 로드 실패</h3>
+               <p className="text-red-600 text-sm">{fetchError}</p>
+           </div>
+        ) : trips.length === 0 ? (
           <div className="text-center py-20 bg-white rounded-2xl shadow-sm border border-dashed border-gray-300">
             <div className="bg-gray-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Map size={32} className="text-gray-400" />
             </div>
-            <h3 className="text-gray-800 font-bold text-lg mb-1">등록된 여행이 없습니다</h3>
-            <p className="text-gray-500 mb-6">첫 번째 여행을 기록하고 추억을 남겨보세요!</p>
+            <h3 className="text-gray-800 font-bold text-lg mb-1">
+                {activeTab === 'MINE' ? '아직 기록된 여행이 없습니다' : '등록된 여행이 없습니다'}
+            </h3>
+            <p className="text-gray-500 mb-6">
+                {activeTab === 'MINE' ? '첫 번째 여행을 기록하고 추억을 남겨보세요!' : '가장 먼저 여행 지도를 공유해보세요!'}
+            </p>
             <button 
                 onClick={handleCreateTripClick}
                 className="text-indigo-600 font-bold hover:underline"
@@ -315,7 +405,7 @@ const App: React.FC = () => {
                          <span className="bg-white/20 px-2 py-0.5 rounded backdrop-blur-sm mr-2">
                              {new Date(trip.createdAt).toLocaleDateString()}
                          </span>
-                         {!user && <span className="text-white/70">by {trip.userId.slice(0,5)}...</span>}
+                         {activeTab === 'ALL' && <span className="text-white/70">by {trip.userId.slice(0,5)}...</span>}
                       </div>
                    </div>
                 </div>
