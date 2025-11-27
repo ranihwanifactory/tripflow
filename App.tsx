@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import Auth from './components/Auth';
 import TripEditor from './components/TripEditor';
 import TripViewer from './components/TripViewer';
+import InstallPrompt from './components/InstallPrompt';
 import { auth, db } from './firebase';
 import { User, onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, query, where, getDocs, deleteDoc, doc, getDoc } from 'firebase/firestore';
@@ -26,20 +27,20 @@ const App: React.FC = () => {
   
   // PWA Install State
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [showInstallBtn, setShowInstallBtn] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
 
   // 1. Auth & PWA Listener & URL Check
   useEffect(() => {
+    // Detect iOS
+    const userAgent = window.navigator.userAgent.toLowerCase();
+    const isIosDevice = /iphone|ipad|ipod/.test(userAgent);
+    setIsIOS(isIosDevice);
+
     // PWA Install Event Listener
     const handleBeforeInstallPrompt = (e: Event) => {
       console.log('PWA: beforeinstallprompt event fired');
       e.preventDefault();
       setDeferredPrompt(e);
-      // Only show install button if not already running in standalone mode
-      const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
-      if (!isStandalone) {
-          setShowInstallBtn(true);
-      }
     };
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
 
@@ -109,8 +110,6 @@ const App: React.FC = () => {
         );
       } else {
          // Explore Mode (Public)
-         // NOTE: This requires Firestore Rules to allow 'read' for everyone.
-         // match /trips/{tripId} { allow read: if true; }
          q = query(collection(db, 'trips'));
       }
 
@@ -134,18 +133,6 @@ const App: React.FC = () => {
     } finally {
       setIsLoadingTrips(false);
     }
-  };
-
-  const handleInstallClick = async () => {
-    if (!deferredPrompt) {
-        alert("설치 가능한 상태가 아닙니다. (이미 설치되었거나 지원하지 않는 브라우저)");
-        return;
-    }
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    console.log(`User response to the install prompt: ${outcome}`);
-    setDeferredPrompt(null);
-    setShowInstallBtn(false);
   };
 
   const handleCreateTripClick = () => {
@@ -222,6 +209,9 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans">
+      {/* Install Prompt Modal (Auto triggers) */}
+      <InstallPrompt deferredPrompt={deferredPrompt} setDeferredPrompt={setDeferredPrompt} isIOS={isIOS} />
+
       {/* Auth Modal */}
       {showAuthModal && <Auth onClose={() => setShowAuthModal(false)} />}
 
@@ -235,16 +225,7 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center space-x-2 sm:space-x-4">
-             {/* PWA Install Button */}
-             {showInstallBtn && (
-                 <button 
-                    onClick={handleInstallClick}
-                    className="flex items-center text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full hover:bg-indigo-100 transition animate-pulse"
-                 >
-                    <Download size={14} className="mr-1"/> 앱 설치
-                 </button>
-             )}
-
+             {/* Note: Install button is now handled by the Modal, but we keep Share */}
              <button 
                 onClick={handleShareApp}
                 className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-gray-100 rounded-full transition"
