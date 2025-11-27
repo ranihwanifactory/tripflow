@@ -32,6 +32,7 @@ export interface TripData {
   bgmUrl?: string;
   bgmType?: BgmType;
   createdAt: number;
+  visibility?: 'PUBLIC' | 'PRIVATE';
 }
 
 export interface Review {

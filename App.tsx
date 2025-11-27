@@ -8,7 +8,7 @@ import { auth, db } from './firebase';
 import { User, onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, query, where, getDocs, deleteDoc, doc, getDoc } from 'firebase/firestore';
 import { TripData } from './types';
-import { Map, Plus, LogOut, Loader2, MapPin, Pencil, Trash2, Download, Share2, LogIn, User as UserIcon, Globe, Compass, AlertCircle } from 'lucide-react';
+import { Map, Plus, LogOut, Loader2, MapPin, Pencil, Trash2, Download, Share2, LogIn, User as UserIcon, Globe, Compass, AlertCircle, Lock } from 'lucide-react';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -86,6 +86,21 @@ const App: React.FC = () => {
     };
   }, []);
 
+  // Security Watchdog: Block access to PRIVATE trips if not owner
+  useEffect(() => {
+      if (view === 'VIEW' && selectedTrip && selectedTrip.visibility === 'PRIVATE') {
+          // Wait for auth to initialize
+          if (!authInitialized) return;
+
+          // If not logged in OR current user is not the owner
+          if (!user || user.uid !== selectedTrip.userId) {
+              alert("비공개 여행이거나 접근 권한이 없습니다.");
+              setSelectedTrip(null);
+              setView('LIST');
+          }
+      }
+  }, [view, selectedTrip, user, authInitialized]);
+
   // 2. Fetch Trips Logic
   useEffect(() => {
     if (authInitialized && view === 'LIST') {
@@ -113,8 +128,17 @@ const App: React.FC = () => {
         fetchedTrips.push({ id: doc.id, ...doc.data() } as TripData);
       });
       
-      fetchedTrips.sort((a,b) => b.createdAt - a.createdAt);
-      setTrips(fetchedTrips);
+      // Client-side Filtering Logic
+      let visibleTrips = fetchedTrips;
+
+      if (activeTab === 'ALL') {
+          // In 'ALL' (Explore) tab, remove PRIVATE trips
+          visibleTrips = fetchedTrips.filter(t => t.visibility !== 'PRIVATE');
+      }
+      // Note: In 'MINE' tab, we show everything (fetched by userId), so no extra filter needed.
+      
+      visibleTrips.sort((a,b) => b.createdAt - a.createdAt);
+      setTrips(visibleTrips);
     } catch (error: any) {
       console.error("Error fetching trips:", error);
       if (error.code === 'permission-denied') {
@@ -304,6 +328,11 @@ const App: React.FC = () => {
               >
                 {user && user.uid === trip.userId && (
                     <div className="absolute top-3 right-3 z-10 flex space-x-1.5 opacity-0 group-hover:opacity-100 transition-opacity translate-y-2 group-hover:translate-y-0 duration-300">
+                        {trip.visibility === 'PRIVATE' && (
+                            <div className="p-2 bg-black/50 text-white rounded-full shadow-lg backdrop-blur" title="나만 보기">
+                                <Lock size={16} />
+                            </div>
+                        )}
                         <button onClick={(e) => handleEditTrip(e, trip)} className="p-2 bg-white/90 hover:bg-white text-indigo-600 rounded-full shadow-lg backdrop-blur hover:text-indigo-700" title="수정"><Pencil size={16} /></button>
                         <button onClick={(e) => trip.id && handleDeleteTrip(e, trip.id)} className="p-2 bg-white/90 hover:bg-white text-red-500 rounded-full shadow-lg backdrop-blur hover:text-red-600" title="삭제"><Trash2 size={16} /></button>
                     </div>
