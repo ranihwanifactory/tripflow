@@ -1,10 +1,10 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { TripPoint, TransportType, TripData } from '../types';
+import { TripPoint, TransportType, TripData, BgmType } from '../types';
 import { db, auth, storage } from '../firebase';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X, MapPin, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X, MapPin, AlertCircle, Music, Youtube, FileAudio, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface TripEditorProps {
   onFinish: () => void;
@@ -21,11 +21,11 @@ const robustSort = (a: TripPoint, b: TripPoint) => {
         if (timeA !== timeB) return timeA - timeB;
     }
     
-    // 2. String compare (ISO format YYYY-MM-DDTHH:mm is lexicographically sortable)
+    // 2. String compare
     const strComp = a.date.localeCompare(b.date);
     if (strComp !== 0) return strComp;
     
-    // 3. Fallback to ID (stable sort for identical times)
+    // 3. Fallback to ID
     return a.id.localeCompare(b.id);
 };
 
@@ -39,6 +39,13 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
   const [tripTitle, setTripTitle] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingPoint, setIsUploadingPoint] = useState(false);
+
+  // BGM State
+  const [bgmType, setBgmType] = useState<BgmType>('NONE');
+  const [bgmUrl, setBgmUrl] = useState('');
+  const [bgmFile, setBgmFile] = useState<File | null>(null);
+  const [isBgmPanelOpen, setIsBgmPanelOpen] = useState(false);
+  const [isUploadingBgm, setIsUploadingBgm] = useState(false);
 
   // Edit Point State
   const [editingPointId, setEditingPointId] = useState<string | null>(null);
@@ -65,6 +72,12 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       // Sort points strictly by date
       const sortedPoints = [...initialData.points].sort(robustSort);
       setPoints(sortedPoints);
+
+      if (initialData.bgmType && initialData.bgmType !== 'NONE') {
+          setBgmType(initialData.bgmType);
+          setBgmUrl(initialData.bgmUrl || '');
+          setIsBgmPanelOpen(true);
+      }
     }
   }, [initialData]);
 
@@ -150,6 +163,20 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       setPreviewUrl(URL.createObjectURL(file));
       setPhotoUrl(''); 
     }
+  };
+
+  const handleBgmFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (e.target.files && e.target.files[0]) {
+          setBgmFile(e.target.files[0]);
+          setBgmUrl(''); // Clear URL if file selected
+      }
+  };
+
+  // Helper to extract YouTube ID
+  const extractYoutubeId = (url: string) => {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? match[2] : null;
   };
 
   const clearForm = () => {
@@ -274,7 +301,27 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     if (points.length < 2) return alert('최소 2개 이상의 지점을 등록해주세요.');
     
     setIsSaving(true);
+    let finalBgmUrl = bgmUrl;
+
     try {
+      // Upload BGM File if exists
+      if (bgmType === 'FILE' && bgmFile) {
+          setIsUploadingBgm(true);
+          const userId = auth.currentUser.uid;
+          const storageRef = ref(storage, `trip_bgm/${userId}/${Date.now()}_${bgmFile.name}`);
+          const snapshot = await uploadBytes(storageRef, bgmFile);
+          finalBgmUrl = await getDownloadURL(snapshot.ref);
+      } else if (bgmType === 'YOUTUBE' && bgmUrl) {
+          const videoId = extractYoutubeId(bgmUrl);
+          if (videoId) {
+              finalBgmUrl = videoId;
+          } else {
+              alert("유효하지 않은 YouTube URL입니다.");
+              setIsSaving(false);
+              return;
+          }
+      }
+
       // FORCE FINAL SORT before saving to DB
       const finalPoints = [...points].sort(robustSort).map((p, idx) => ({ ...p, order: idx }));
 
@@ -282,6 +329,8 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
         userId: auth.currentUser.uid,
         title: tripTitle,
         points: finalPoints,
+        bgmType,
+        bgmUrl: finalBgmUrl,
         createdAt: initialData ? initialData.createdAt : Date.now(),
       };
 
@@ -299,6 +348,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       alert('저장 중 오류가 발생했습니다. (Firestore Rules를 확인해주세요)');
     } finally {
       setIsSaving(false);
+      setIsUploadingBgm(false);
     }
   };
 
@@ -308,8 +358,8 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       <div className="w-full md:w-[420px] bg-white shadow-xl z-20 flex flex-col h-full border-r border-gray-200">
         
         {/* 1. Header Area (Fixed) */}
-        <div className="p-5 border-b bg-white z-10">
-            <div className="flex items-center mb-3">
+        <div className="p-5 border-b bg-white z-10 space-y-3">
+            <div className="flex items-center">
                 <button onClick={onFinish} className="mr-3 p-2 hover:bg-gray-100 rounded-full transition">
                     <ArrowLeft size={20} className="text-gray-600"/>
                 </button>
@@ -325,6 +375,70 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                     value={tripTitle}
                     onChange={(e) => setTripTitle(e.target.value)}
                 />
+            </div>
+
+            {/* BGM Configuration Toggle */}
+            <div className="border rounded-lg bg-gray-50 overflow-hidden">
+                <button 
+                    onClick={() => setIsBgmPanelOpen(!isBgmPanelOpen)}
+                    className="w-full p-3 flex justify-between items-center text-sm font-bold text-gray-700 hover:bg-gray-100 transition"
+                >
+                    <span className="flex items-center gap-2">
+                        <Music size={16} className="text-indigo-600"/>
+                        {bgmType !== 'NONE' ? '배경음악 설정됨' : '배경음악 설정 (선택)'}
+                    </span>
+                    {isBgmPanelOpen ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
+                </button>
+                
+                {isBgmPanelOpen && (
+                    <div className="p-3 border-t bg-white space-y-3 animate-fade-in">
+                        <div className="flex gap-2">
+                            <button 
+                                onClick={() => setBgmType('YOUTUBE')}
+                                className={`flex-1 py-2 text-xs font-bold rounded-md border flex items-center justify-center gap-1 ${bgmType === 'YOUTUBE' ? 'bg-red-50 border-red-200 text-red-600' : 'hover:bg-gray-50'}`}
+                            >
+                                <Youtube size={14}/> 유튜브
+                            </button>
+                            <button 
+                                onClick={() => setBgmType('FILE')}
+                                className={`flex-1 py-2 text-xs font-bold rounded-md border flex items-center justify-center gap-1 ${bgmType === 'FILE' ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'hover:bg-gray-50'}`}
+                            >
+                                <FileAudio size={14}/> 파일 업로드
+                            </button>
+                            <button 
+                                onClick={() => { setBgmType('NONE'); setBgmUrl(''); setBgmFile(null); }}
+                                className={`px-3 py-2 text-xs font-bold rounded-md border hover:bg-gray-50 ${bgmType === 'NONE' ? 'bg-gray-200 text-gray-700' : 'text-gray-500'}`}
+                            >
+                                없음
+                            </button>
+                        </div>
+
+                        {bgmType === 'YOUTUBE' && (
+                            <div>
+                                <input 
+                                    type="text" 
+                                    className="w-full p-2 border rounded text-xs"
+                                    placeholder="유튜브 영상 주소 (URL) 입력"
+                                    value={bgmUrl}
+                                    onChange={(e) => setBgmUrl(e.target.value)}
+                                />
+                                <p className="text-[10px] text-gray-400 mt-1">* 영상 ID가 자동으로 추출되어 저장됩니다.</p>
+                            </div>
+                        )}
+
+                        {bgmType === 'FILE' && (
+                            <div>
+                                <input 
+                                    type="file" 
+                                    className="w-full text-xs"
+                                    accept="audio/*"
+                                    onChange={handleBgmFileChange}
+                                />
+                                {bgmUrl && !bgmFile && <p className="text-[10px] text-green-600 mt-1">✓ 기존 파일이 저장되어 있습니다.</p>}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </div>
 
@@ -534,7 +648,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
             disabled={isSaving || points.length < 2}
             className={`w-full text-white py-3.5 rounded-xl font-bold shadow-lg flex items-center justify-center text-lg ${isSaving || points.length < 2 ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
             >
-            <Save size={20} className="mr-2" />
+            {isSaving || isUploadingBgm ? <Loader2 className="animate-spin mr-2"/> : <Save size={20} className="mr-2" />}
             {isSaving ? '저장 중...' : '여행 지도 발행하기'}
             </button>
         </div>

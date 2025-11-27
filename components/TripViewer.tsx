@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { TripData, TransportType, Review, TripPoint } from '../types';
-import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send, Globe, Layers, Trash2, Pencil, Check, Share2, Link as LinkIcon } from 'lucide-react';
+import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send, Globe, Layers, Trash2, Pencil, Check, Share2, Link as LinkIcon, Music, Play, Pause, Volume2, VolumeX } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, addDoc, query, where, onSnapshot, deleteDoc, updateDoc, doc } from 'firebase/firestore';
 
@@ -105,6 +105,12 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   const [editReviewText, setEditReviewText] = useState('');
   const [editReviewRating, setEditReviewRating] = useState(5);
 
+  // BGM State
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const youtubePlayerRef = useRef<any>(null);
+
   // 0. Sort points chronologically
   const sortedPoints = useMemo(() => {
     if (!trip || !trip.points) return [];
@@ -137,6 +143,92 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   const fullBackgroundPath = useMemo(() => {
       return pathSegments.flatMap(seg => seg.curvePath);
   }, [pathSegments]);
+
+
+  // BGM Logic
+  useEffect(() => {
+    if (!trip.bgmType || trip.bgmType === 'NONE' || !trip.bgmUrl) return;
+
+    if (trip.bgmType === 'FILE') {
+        const audio = new Audio(trip.bgmUrl);
+        audio.loop = true;
+        audio.volume = 0.5;
+        audioRef.current = audio;
+        // Attempt autoplay
+        audio.play().then(() => setIsPlaying(true)).catch(e => console.log("Autoplay blocked:", e));
+        
+        return () => {
+            audio.pause();
+            audio.src = '';
+            audioRef.current = null;
+        };
+    } else if (trip.bgmType === 'YOUTUBE') {
+        const tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        const firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+
+        window.onYouTubeIframeAPIReady = () => {
+            youtubePlayerRef.current = new window.YT.Player('youtube-player', {
+                height: '0',
+                width: '0',
+                videoId: trip.bgmUrl,
+                playerVars: {
+                    'playsinline': 1,
+                    'controls': 0,
+                    'loop': 1,
+                    'playlist': trip.bgmUrl // required for loop
+                },
+                events: {
+                    'onReady': (event: any) => {
+                        event.target.setVolume(50);
+                        event.target.playVideo();
+                        setIsPlaying(true);
+                    },
+                    'onStateChange': (event: any) => {
+                        if (event.data === window.YT.PlayerState.PLAYING) {
+                            setIsPlaying(true);
+                        } else if (event.data === window.YT.PlayerState.PAUSED) {
+                            setIsPlaying(false);
+                        }
+                    }
+                }
+            });
+        };
+    }
+  }, [trip.bgmType, trip.bgmUrl]);
+
+  const togglePlay = () => {
+      if (trip.bgmType === 'FILE' && audioRef.current) {
+          if (isPlaying) {
+              audioRef.current.pause();
+              setIsPlaying(false);
+          } else {
+              audioRef.current.play();
+              setIsPlaying(true);
+          }
+      } else if (trip.bgmType === 'YOUTUBE' && youtubePlayerRef.current) {
+          if (isPlaying) {
+              youtubePlayerRef.current.pauseVideo();
+          } else {
+              youtubePlayerRef.current.playVideo();
+          }
+      }
+  };
+
+  const toggleMute = () => {
+      if (trip.bgmType === 'FILE' && audioRef.current) {
+          audioRef.current.muted = !isMuted;
+          setIsMuted(!isMuted);
+      } else if (trip.bgmType === 'YOUTUBE' && youtubePlayerRef.current) {
+          if (isMuted) {
+              youtubePlayerRef.current.unMute();
+          } else {
+              youtubePlayerRef.current.mute();
+          }
+          setIsMuted(!isMuted);
+      }
+  };
 
 
   // Fetch Reviews
@@ -249,7 +341,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       center: startPos,
       level: 9, 
       draggable: false, 
-      zoomable: false,
+      zoomable: false, 
       scrollwheel: false,
       disableDoubleClickZoom: true,
       mapTypeId: mapType === 'HYBRID' ? window.kakao.maps.MapTypeId.HYBRID : window.kakao.maps.MapTypeId.ROADMAP
@@ -361,9 +453,49 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       
       if (safeIndex >= 0 && safeIndex < pathSegments.length) {
           const segment = pathSegments[safeIndex];
+          
+          // Calculate current position
           const currentPos = getQuadraticBezierPoint(sectionProgress, segment.start, segment.control, segment.end);
           transportOverlay.setPosition(currentPos);
           map.panTo(currentPos);
+          
+          // Calculate Rotation
+          // Look ahead slightly (e.g. 0.05) to get tangent
+          const nextT = Math.min(sectionProgress + 0.05, 1);
+          const nextPos = getQuadraticBezierPoint(nextT, segment.start, segment.control, segment.end);
+          
+          const dLat = nextPos.getLat() - currentPos.getLat();
+          const dLng = nextPos.getLng() - currentPos.getLng();
+          
+          // Only rotate directional transport types
+          const type = segment.data.transportToNext;
+          if (type !== 'WALK') {
+               const angle = Math.atan2(dLat, dLng) * (180 / Math.PI);
+               // Icons typically face right (0deg) or up (90deg). Assuming emoji faces right? 
+               // Actually emojis are upright text. Rotating text:
+               // 0deg is East. 90deg is North.
+               // Atan2 returns radians, convert to deg.
+               // Adjust rotation based on icon orientation. Emojis usually face left/right depending on OS, but plane ✈️ usually faces up-right (NE)
+               // Let's assume standard rotation.
+               
+               const iconDiv = transportOverlay.getContent();
+               if(iconDiv) {
+                   // CSS rotate: 0deg is pointing up? No, standard CSS rotate.
+                   // Let's apply simple rotation. Note: Lat increases North (Up), Lng increases East (Right).
+                   // But screen coordinates: Y increases Down. Map: Lat increases Up.
+                   // Math.atan2(y, x). Here y is dLat, x is dLng.
+                   // Normal math: 0 is Right, 90 is Up.
+                   // CSS rotate: 0 is Up? or Right?
+                   // Usually rotate(90deg) turns clockwise.
+                   // Let's try: -angle (counter-clockwise) + 90?
+                   
+                   // Simplified: Plane faces North (Up) at 0 rotation? or Right?
+                   // Let's just rotate based on atan2 logic, possibly flipping Y because screen vs map coords.
+                   
+                   // Using simple hack: just set rotation
+                   iconDiv.style.transform = `translate(-50%, -50%) rotate(${-(angle - 90)}deg)`;
+               }
+          }
 
           const iconDiv = transportOverlay.getContent();
           if(iconDiv) {
@@ -444,8 +576,34 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/80 pointer-events-none" />
       </div>
 
+      {/* Hidden YouTube Player */}
+      {trip.bgmType === 'YOUTUBE' && trip.bgmUrl && (
+          <div id="youtube-player" className="hidden" />
+      )}
+
       {/* 2. Top Controls */}
-      <div className="fixed top-6 right-6 z-50 flex gap-4">
+      <div className="fixed top-6 right-6 z-50 flex gap-4 items-start">
+          
+          {/* BGM Player Widget */}
+          {trip.bgmType && trip.bgmType !== 'NONE' && (
+              <div className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-2 rounded-full border border-white/20 shadow-lg flex items-center space-x-2 pr-4 transition-all">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isPlaying ? 'bg-indigo-500 animate-pulse' : 'bg-gray-600'}`}>
+                      <Music size={14} className={isPlaying ? 'animate-spin-slow' : ''} />
+                  </div>
+                  <div className="flex flex-col">
+                      <span className="text-[10px] text-gray-300 uppercase tracking-wider font-bold">Background Music</span>
+                      <div className="flex items-center space-x-3">
+                        <button onClick={togglePlay} className="hover:text-indigo-400 transition">
+                            {isPlaying ? <Pause size={16} fill="currentColor"/> : <Play size={16} fill="currentColor"/>}
+                        </button>
+                        <button onClick={toggleMute} className="hover:text-indigo-400 transition">
+                            {isMuted ? <VolumeX size={16}/> : <Volume2 size={16}/>}
+                        </button>
+                      </div>
+                  </div>
+              </div>
+          )}
+
           <button 
             onClick={handleShareTrip}
             className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group"

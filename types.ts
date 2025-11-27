@@ -14,18 +14,22 @@ export interface TripPoint {
   locationName: string; // 업체 or 지역명
   address: string;
   date: string; // ISO String
-  transportToNext: TransportType; // Method used to get to the NEXT point (or form previous if easier logic)
+  transportToNext: TransportType; // Method used to get to the NEXT point
   title: string;
   description: string;
   photoUrl: string;
   order: number;
 }
 
+export type BgmType = 'YOUTUBE' | 'FILE' | 'NONE';
+
 export interface TripData {
   id?: string;
   userId: string;
   title: string;
   points: TripPoint[];
+  bgmUrl?: string;
+  bgmType?: BgmType;
   createdAt: number;
 }
 
@@ -44,5 +48,7 @@ export interface Review {
 declare global {
   interface Window {
     kakao: any;
+    YT: any;
+    onYouTubeIframeAPIReady: () => void;
   }
 }
