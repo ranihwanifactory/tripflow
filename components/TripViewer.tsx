@@ -476,10 +476,12 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       
       const currentSectionIndex = Math.floor(relativeScroll / sectionHeight);
       const sectionProgress = (relativeScroll % sectionHeight) / sectionHeight;
-      const safeIndex = Math.min(currentSectionIndex, pathSegments.length - 1);
       
-      if (safeIndex >= 0 && safeIndex < pathSegments.length) {
-          const segment = pathSegments[safeIndex];
+      // CRITICAL FIX: Explicitly handle the "End of Trip" state.
+      // If we scroll past the last segment, force the map to the last point and stop animation looping.
+      if (currentSectionIndex < pathSegments.length) {
+          // --- TRAVELING MODE ---
+          const segment = pathSegments[currentSectionIndex];
           const currentPos = getQuadraticBezierPoint(sectionProgress, segment.start, segment.control, segment.end);
           transportOverlay.setPosition(currentPos);
           map.panTo(currentPos);
@@ -504,15 +506,24 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
               }
           }
 
-          const historyPath = pathSegments.slice(0, safeIndex).flatMap(s => s.curvePath);
+          const historyPath = pathSegments.slice(0, currentSectionIndex).flatMap(s => s.curvePath);
           const currentPartialPath = generateCurvePath(segment.start, segment.end, segment.control, Math.floor(sectionProgress * 50));
           traveledPolyline.setPath([...historyPath, ...currentPartialPath]);
 
-      } else if (currentSectionIndex >= pathSegments.length) {
+      } else {
+          // --- ARRIVED AT DESTINATION MODE ---
+          // Force position to the absolute last point
           const lastPoint = sortedPoints[sortedPoints.length - 1];
           const pos = new window.kakao.maps.LatLng(lastPoint.lat, lastPoint.lng);
+          
           transportOverlay.setPosition(pos);
-          traveledPolyline.setPath(fullBackgroundPath);
+          traveledPolyline.setPath(fullBackgroundPath); // Show full path
+          
+          const iconDiv = transportOverlay.getContent();
+          if (iconDiv) {
+              iconDiv.style.transform = `translate(-50%, -50%) rotate(0deg)`;
+              // Optional: change icon to something that signifies arrival if needed
+          }
       }
 
       sortedPoints.forEach((_, idx) => {
