@@ -494,37 +494,29 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
           transportOverlay.setPosition(currentPos);
           map.panTo(currentPos);
           
-          // Calculate Rotation
-          // Look ahead slightly (e.g. 0.05) to get tangent
-          const nextT = Math.min(sectionProgress + 0.05, 1);
-          const nextPos = getQuadraticBezierPoint(nextT, segment.start, segment.control, segment.end);
-          
-          const dLat = nextPos.getLat() - currentPos.getLat();
-          const dLng = nextPos.getLng() - currentPos.getLng();
-          
-          // Only rotate directional transport types
-          const type = segment.data.transportToNext;
-          if (type !== 'WALK') {
-               const angle = Math.atan2(dLat, dLng) * (180 / Math.PI);
-               const iconDiv = transportOverlay.getContent();
-               if(iconDiv) {
-                   // Correct icon rotation based on assumption that icons face right (0deg) or up (90deg)
-                   // Map coordinates vs Screen: Y increases UP on map lat. X increases Right on map lng.
-                   // Math.atan2(y,x) -> 0 is East. 90 is North.
-                   // CSS rotate: 0 is default.
-                   // Let's assume default icon is upright. Rotation is usually clockwise in CSS.
-                   // But atan2 returns counter-clockwise angle from X axis.
-                   // We need -angle + 90.
-                   iconDiv.style.transform = `translate(-50%, -50%) rotate(${-(angle - 90)}deg)`;
-               }
-          }
-
           const iconDiv = transportOverlay.getContent();
           if(iconDiv) {
               const transportMode = segment.data.transportToNext;
               const iconChar = getTransportIcon(transportMode);
               if (iconDiv.innerText !== iconChar) {
                   iconDiv.innerText = iconChar;
+              }
+
+              // Special rotation for PLANE
+              if (transportMode === 'PLANE') {
+                  const nextT = Math.min(sectionProgress + 0.05, 1);
+                  const nextPos = getQuadraticBezierPoint(nextT, segment.start, segment.control, segment.end);
+                  
+                  const dLat = nextPos.getLat() - currentPos.getLat();
+                  const dLng = nextPos.getLng() - currentPos.getLng();
+                  const angle = Math.atan2(dLat, dLng) * (180 / Math.PI);
+
+                  // Plane emoji ✈️ points approx NE (45deg). 
+                  // Formula to face travel direction: -angle + 45
+                  iconDiv.style.transform = `translate(-50%, -50%) rotate(${-angle + 45}deg)`;
+              } else {
+                  // Keep others horizontal/upright
+                  iconDiv.style.transform = `translate(-50%, -50%) rotate(0deg)`;
               }
           }
 
