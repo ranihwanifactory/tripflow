@@ -149,6 +149,16 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   useEffect(() => {
     if (!trip.bgmType || trip.bgmType === 'NONE' || !trip.bgmUrl) return;
 
+    // Cleanup previous player
+    if (youtubePlayerRef.current) {
+        youtubePlayerRef.current.destroy();
+        youtubePlayerRef.current = null;
+    }
+    if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+    }
+
     if (trip.bgmType === 'FILE') {
         const audio = new Audio(trip.bgmUrl);
         audio.loop = true;
@@ -163,12 +173,9 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
             audioRef.current = null;
         };
     } else if (trip.bgmType === 'YOUTUBE') {
-        const tag = document.createElement('script');
-        tag.src = "https://www.youtube.com/iframe_api";
-        const firstScriptTag = document.getElementsByTagName('script')[0];
-        firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
-
-        window.onYouTubeIframeAPIReady = () => {
+        const initPlayer = () => {
+            if (!window.YT || !window.YT.Player) return;
+            
             youtubePlayerRef.current = new window.YT.Player('youtube-player', {
                 height: '0',
                 width: '0',
@@ -177,7 +184,8 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                     'playsinline': 1,
                     'controls': 0,
                     'loop': 1,
-                    'playlist': trip.bgmUrl // required for loop
+                    'playlist': trip.bgmUrl, // required for loop
+                    'origin': window.location.origin
                 },
                 events: {
                     'onReady': (event: any) => {
@@ -195,6 +203,28 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                 }
             });
         };
+
+        if (window.YT && window.YT.Player) {
+            initPlayer();
+        } else {
+            // Load API only if not loaded
+            if (!document.getElementById('youtube-iframe-api')) {
+                const tag = document.createElement('script');
+                tag.id = 'youtube-iframe-api';
+                tag.src = "https://www.youtube.com/iframe_api";
+                const firstScriptTag = document.getElementsByTagName('script')[0];
+                firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+            }
+            // Overwriting onYouTubeIframeAPIReady is risky if multiple components do it, but here it's fine
+            window.onYouTubeIframeAPIReady = initPlayer;
+        }
+
+        return () => {
+            if (youtubePlayerRef.current) {
+                youtubePlayerRef.current.destroy();
+                youtubePlayerRef.current = null;
+            }
+        };
     }
   }, [trip.bgmType, trip.bgmUrl]);
 
@@ -208,6 +238,9 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
               setIsPlaying(true);
           }
       } else if (trip.bgmType === 'YOUTUBE' && youtubePlayerRef.current) {
+          // YT Player might not be ready
+          if (typeof youtubePlayerRef.current.getPlayerState !== 'function') return;
+
           if (isPlaying) {
               youtubePlayerRef.current.pauseVideo();
           } else {
@@ -221,6 +254,8 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
           audioRef.current.muted = !isMuted;
           setIsMuted(!isMuted);
       } else if (trip.bgmType === 'YOUTUBE' && youtubePlayerRef.current) {
+          if (typeof youtubePlayerRef.current.isMuted !== 'function') return;
+          
           if (isMuted) {
               youtubePlayerRef.current.unMute();
           } else {
@@ -342,7 +377,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       level: 9, 
       draggable: false, 
       zoomable: false, 
-      scrollwheel: false,
+      scrollwheel: false, 
       disableDoubleClickZoom: true,
       mapTypeId: mapType === 'HYBRID' ? window.kakao.maps.MapTypeId.HYBRID : window.kakao.maps.MapTypeId.ROADMAP
     };
@@ -471,28 +506,15 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
           const type = segment.data.transportToNext;
           if (type !== 'WALK') {
                const angle = Math.atan2(dLat, dLng) * (180 / Math.PI);
-               // Icons typically face right (0deg) or up (90deg). Assuming emoji faces right? 
-               // Actually emojis are upright text. Rotating text:
-               // 0deg is East. 90deg is North.
-               // Atan2 returns radians, convert to deg.
-               // Adjust rotation based on icon orientation. Emojis usually face left/right depending on OS, but plane ✈️ usually faces up-right (NE)
-               // Let's assume standard rotation.
-               
                const iconDiv = transportOverlay.getContent();
                if(iconDiv) {
-                   // CSS rotate: 0deg is pointing up? No, standard CSS rotate.
-                   // Let's apply simple rotation. Note: Lat increases North (Up), Lng increases East (Right).
-                   // But screen coordinates: Y increases Down. Map: Lat increases Up.
-                   // Math.atan2(y, x). Here y is dLat, x is dLng.
-                   // Normal math: 0 is Right, 90 is Up.
-                   // CSS rotate: 0 is Up? or Right?
-                   // Usually rotate(90deg) turns clockwise.
-                   // Let's try: -angle (counter-clockwise) + 90?
-                   
-                   // Simplified: Plane faces North (Up) at 0 rotation? or Right?
-                   // Let's just rotate based on atan2 logic, possibly flipping Y because screen vs map coords.
-                   
-                   // Using simple hack: just set rotation
+                   // Correct icon rotation based on assumption that icons face right (0deg) or up (90deg)
+                   // Map coordinates vs Screen: Y increases UP on map lat. X increases Right on map lng.
+                   // Math.atan2(y,x) -> 0 is East. 90 is North.
+                   // CSS rotate: 0 is default.
+                   // Let's assume default icon is upright. Rotation is usually clockwise in CSS.
+                   // But atan2 returns counter-clockwise angle from X axis.
+                   // We need -angle + 90.
                    iconDiv.style.transform = `translate(-50%, -50%) rotate(${-(angle - 90)}deg)`;
                }
           }
@@ -577,9 +599,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       </div>
 
       {/* Hidden YouTube Player */}
-      {trip.bgmType === 'YOUTUBE' && trip.bgmUrl && (
-          <div id="youtube-player" className="hidden" />
-      )}
+      <div id="youtube-player" className="hidden" />
 
       {/* 2. Top Controls */}
       <div className="fixed top-6 right-6 z-50 flex gap-4 items-start">

@@ -174,6 +174,10 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
 
   // Helper to extract YouTube ID
   const extractYoutubeId = (url: string) => {
+    // If it's already an ID (11 chars, alphanumeric + _ -)
+    const idRegex = /^[a-zA-Z0-9_-]{11}$/;
+    if (idRegex.test(url)) return url;
+
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
     const match = url.match(regExp);
     return (match && match[2].length === 11) ? match[2] : null;
@@ -316,7 +320,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
           if (videoId) {
               finalBgmUrl = videoId;
           } else {
-              alert("유효하지 않은 YouTube URL입니다.");
+              alert("유효하지 않은 YouTube URL (또는 ID) 입니다.");
               setIsSaving(false);
               return;
           }
@@ -418,11 +422,11 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                                 <input 
                                     type="text" 
                                     className="w-full p-2 border rounded text-xs"
-                                    placeholder="유튜브 영상 주소 (URL) 입력"
+                                    placeholder="유튜브 영상 주소 (또는 ID) 입력"
                                     value={bgmUrl}
                                     onChange={(e) => setBgmUrl(e.target.value)}
                                 />
-                                <p className="text-[10px] text-gray-400 mt-1">* 영상 ID가 자동으로 추출되어 저장됩니다.</p>
+                                <p className="text-[10px] text-gray-400 mt-1">* ID(예: dQw4w9WgXcQ) 또는 전체 URL 입력 가능</p>
                             </div>
                         )}
 
