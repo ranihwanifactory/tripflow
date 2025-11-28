@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import Auth from './components/Auth';
 import TripEditor from './components/TripEditor';
@@ -21,6 +20,7 @@ const App: React.FC = () => {
   const [isLoadingTrips, setIsLoadingTrips] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [selectedTrip, setSelectedTrip] = useState<TripData | null>(null);
+  const [pendingTripId, setPendingTripId] = useState<string | null>(null);
 
   // Modal States
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -49,36 +49,21 @@ const App: React.FC = () => {
       setAuthInitialized(true);
       if (currentUser) {
           setShowAuthModal(false);
-          // If viewing list, switch to MINE by default only if previously on ALL
           if (view === 'LIST' && activeTab === 'ALL') {
              setActiveTab('MINE'); 
           }
       } else {
-          setActiveTab('ALL'); // Default to All for guests
+          setActiveTab('ALL');
       }
     });
 
     // Check for Direct Link (?tripId=xyz)
-    const checkDirectLink = async () => {
-        const params = new URLSearchParams(window.location.search);
-        const tripId = params.get('tripId');
-        if (tripId) {
-            try {
-                const docRef = doc(db, 'trips', tripId);
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists()) {
-                    const tripData = { id: docSnap.id, ...docSnap.data() } as TripData;
-                    setSelectedTrip(tripData);
-                    setView('VIEW');
-                    // Remove param from URL to clean up without reload
-                    window.history.replaceState({}, '', window.location.pathname);
-                }
-            } catch (e) {
-                console.error("Error loading linked trip:", e);
-            }
-        }
-    };
-    checkDirectLink();
+    const params = new URLSearchParams(window.location.search);
+    const tid = params.get('tripId');
+    if (tid) {
+        setPendingTripId(tid);
+        window.history.replaceState({}, '', window.location.pathname);
+    }
 
     return () => {
       unsubscribe();
@@ -86,22 +71,59 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Security Watchdog: Block access to PRIVATE trips if not owner
+  // 2. Secure Trip Loading (Handle Pending Link)
   useEffect(() => {
-      if (view === 'VIEW' && selectedTrip && selectedTrip.visibility === 'PRIVATE') {
-          // Wait for auth to initialize
-          if (!authInitialized) return;
+      const loadPendingTrip = async () => {
+          if (!pendingTripId || !authInitialized) return;
 
-          // If not logged in OR current user is not the owner
-          if (!user || user.uid !== selectedTrip.userId) {
-              alert("비공개 여행이거나 접근 권한이 없습니다.");
-              setSelectedTrip(null);
-              setView('LIST');
+          try {
+              const docRef = doc(db, 'trips', pendingTripId);
+              const docSnap = await getDoc(docRef);
+              
+              if (docSnap.exists()) {
+                  const tripData = { id: docSnap.id, ...docSnap.data() } as TripData;
+                  
+                  // Security Check for Direct Link
+                  if (tripData.visibility === 'PRIVATE') {
+                      if (!user || user.uid !== tripData.userId) {
+                          alert("이 여행은 비공개로 설정되어 있습니다. 작성자만 볼 수 있습니다.");
+                          setPendingTripId(null);
+                          return;
+                      }
+                  }
+                  
+                  setSelectedTrip(tripData);
+                  setView('VIEW');
+              } else {
+                  alert("존재하지 않는 여행입니다.");
+              }
+          } catch (e) {
+              console.error("Error loading linked trip:", e);
+              alert("여행 정보를 불러오는 중 오류가 발생했습니다.");
+          } finally {
+              setPendingTripId(null);
+          }
+      };
+
+      loadPendingTrip();
+  }, [pendingTripId, authInitialized, user]);
+
+  // 3. Security Watchdog (Runtime Protection)
+  useEffect(() => {
+      // If currently viewing a trip, check permissions dynamically (e.g., after logout)
+      if (view === 'VIEW' && selectedTrip && selectedTrip.visibility === 'PRIVATE') {
+          if (authInitialized) {
+              if (!user || user.uid !== selectedTrip.userId) {
+                  alert("로그아웃되어 비공개 여행을 볼 수 없습니다.");
+                  setSelectedTrip(null);
+                  setView('LIST');
+                  setActiveTab('ALL');
+              }
           }
       }
   }, [view, selectedTrip, user, authInitialized]);
 
-  // 2. Fetch Trips Logic
+  // 4. Fetch Trips Logic
   useEffect(() => {
     if (authInitialized && view === 'LIST') {
       fetchTrips();
@@ -135,14 +157,13 @@ const App: React.FC = () => {
           // In 'ALL' (Explore) tab, remove PRIVATE trips
           visibleTrips = fetchedTrips.filter(t => t.visibility !== 'PRIVATE');
       }
-      // Note: In 'MINE' tab, we show everything (fetched by userId), so no extra filter needed.
       
       visibleTrips.sort((a,b) => b.createdAt - a.createdAt);
       setTrips(visibleTrips);
     } catch (error: any) {
       console.error("Error fetching trips:", error);
       if (error.code === 'permission-denied') {
-          setFetchError("데이터를 불러올 권한이 없습니다. Firebase Console에서 Firestore Rules를 확인해주세요. (allow read: if true;)");
+          setFetchError("데이터를 불러올 권한이 없습니다. Firestore Rules를 확인해주세요.");
       } else {
           setFetchError("여행 목록을 불러오는 중 오류가 발생했습니다.");
       }
@@ -183,7 +204,7 @@ const App: React.FC = () => {
     if(window.confirm("로그아웃 하시겠습니까?")) {
         await signOut(auth);
         setView('LIST'); 
-        setActiveTab('ALL'); // Go back to public view
+        setActiveTab('ALL');
     }
   };
 
