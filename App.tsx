@@ -8,7 +8,7 @@ import { auth, db } from './firebase';
 import { User, onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, query, where, getDocs, deleteDoc, doc, getDoc } from 'firebase/firestore';
 import { TripData } from './types';
-import { Map, Plus, LogOut, Loader2, MapPin, Pencil, Trash2, Download, Share2, LogIn, User as UserIcon, Globe, Compass, AlertCircle, Lock, Sun, Moon } from 'lucide-react';
+import { Map, Plus, LogOut, Loader2, MapPin, Pencil, Trash2, Download, Share2, LogIn, User as UserIcon, Globe, Compass, AlertCircle, Lock, Sun, Moon, Mail, ExternalLink } from 'lucide-react';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -144,7 +144,7 @@ const App: React.FC = () => {
   if (view === 'VIEW' && selectedTrip) return <TripViewer trip={selectedTrip} onClose={() => { setSelectedTrip(null); setView('LIST'); }} />;
 
   return (
-    <div className={`min-h-screen transition-colors duration-500 ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-stone-50 text-gray-900'}`}>
+    <div className={`min-h-screen transition-colors duration-500 flex flex-col ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-stone-50 text-gray-900'}`}>
       <InstallPrompt deferredPrompt={deferredPrompt} setDeferredPrompt={setDeferredPrompt} isIOS={isIOS} />
       {showAuthModal && <Auth onClose={() => setShowAuthModal(false)} />}
 
@@ -190,7 +190,7 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 flex-grow">
         <div className="flex flex-col sm:flex-row justify-between items-end mb-10 gap-6">
           <div className="max-w-xl">
             <h2 className="text-4xl font-black mb-3 leading-tight tracking-tight">
@@ -293,6 +293,51 @@ const App: React.FC = () => {
           </div>
         )}
       </main>
+
+      {/* Footer Section */}
+      <footer className={`mt-20 py-16 border-t transition-colors duration-500 ${isDarkMode ? 'bg-slate-950/50 border-slate-800' : 'bg-stone-100 border-stone-200'}`}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex flex-col items-center gap-8">
+                <div className="flex items-center space-x-2 opacity-60">
+                    <div className="bg-indigo-600 p-1.5 rounded-lg text-white">
+                        <Map size={16} />
+                    </div>
+                    <span className="text-lg font-black tracking-tighter italic">TripFlow</span>
+                </div>
+                
+                <div className="flex flex-wrap justify-center items-center gap-x-4 gap-y-4 text-sm font-bold tracking-tight">
+                    <div className="flex items-center gap-2 group cursor-default">
+                        <span className={`px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-500 text-[10px] uppercase font-black`}>Creator</span>
+                        <span className={isDarkMode ? 'text-slate-300' : 'text-stone-700'}>GREAK80K</span>
+                    </div>
+                    <span className="hidden sm:inline opacity-20">|</span>
+                    <a href="mailto:hwanace@naver.com" className={`flex items-center gap-1.5 transition-colors ${isDarkMode ? 'text-slate-400 hover:text-indigo-400' : 'text-stone-500 hover:text-indigo-600'}`}>
+                        <Mail size={14} />
+                        <span>hwanace@naver.com</span>
+                    </a>
+                    <span className="hidden sm:inline opacity-20">|</span>
+                    <a href="https://ranihwanibaby.tistory.com/" target="_blank" rel="noopener noreferrer" className={`flex items-center gap-1.5 transition-colors ${isDarkMode ? 'text-slate-400 hover:text-indigo-400' : 'text-stone-500 hover:text-indigo-600'}`}>
+                        <ExternalLink size={14} />
+                        <span>블로그</span>
+                    </a>
+                    <span className="hidden sm:inline opacity-20">|</span>
+                    <a href="https://youtube.com" target="_blank" rel="noopener noreferrer" className={`flex items-center gap-1.5 transition-colors ${isDarkMode ? 'text-slate-400 hover:text-indigo-400' : 'text-stone-500 hover:text-indigo-600'}`}>
+                        <ExternalLink size={14} />
+                        <span>YOUTUBE</span>
+                    </a>
+                </div>
+                
+                <div className="text-center space-y-2">
+                    <p className={`text-[11px] font-black uppercase tracking-[0.2em] opacity-30 ${isDarkMode ? 'text-slate-500' : 'text-stone-400'}`}>
+                        Crafting your digital footprints, one map at a time.
+                    </p>
+                    <p className={`text-[10px] font-medium opacity-20 ${isDarkMode ? 'text-slate-500' : 'text-stone-400'}`}>
+                        © 2024 TripFlow Journey. All rights reserved.
+                    </p>
+                </div>
+            </div>
+        </div>
+      </footer>
     </div>
   );
 };

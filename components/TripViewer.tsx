@@ -432,7 +432,8 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
             {sortedPoints.map((point, idx) => (
             <div key={point.id} style={{ height: `${SCROLL_HEIGHT_MULTIPLIER * 100}vh` }} className="w-full relative">
                 <div className="sticky top-0 h-screen w-full flex items-center justify-start p-6 md:pl-20">
-                    <div ref={el => cardRefs.current[idx] = el} className={`w-full max-w-sm rounded-[2.5rem] overflow-hidden transform opacity-0 shadow-2xl transition-all duration-700 border ${isDarkMode ? 'bg-slate-900/90 backdrop-blur-2xl border-white/10' : 'bg-white/95 backdrop-blur-xl border-stone-200'}`}>
+                    {/* Fix: Ref callback must return void. Using a block to prevent implicit return of assigned value. */}
+                    <div ref={(el) => { cardRefs.current[idx] = el; }} className={`w-full max-w-sm rounded-[2.5rem] overflow-hidden transform opacity-0 shadow-2xl transition-all duration-700 border ${isDarkMode ? 'bg-slate-900/90 backdrop-blur-2xl border-white/10' : 'bg-white/95 backdrop-blur-xl border-stone-200'}`}>
                         <div className="relative h-64 group">
                             <img src={point.photoUrl} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-1000" />
                             <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
