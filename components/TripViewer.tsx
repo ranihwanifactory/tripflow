@@ -10,7 +10,7 @@ interface TripViewerProps {
   onClose: () => void;
 }
 
-const SCROLL_HEIGHT_MULTIPLIER = 1.2;
+const SCROLL_HEIGHT_MULTIPLIER = 1.3;
 
 const getTransportIcon = (type: TransportType) => {
   switch (type) {
@@ -88,7 +88,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   const [transportOverlay, setTransportOverlay] = useState<any>(null);
   const [traveledPolyline, setTraveledPolyline] = useState<any>(null);
   
-  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
   const [mapType, setMapType] = useState<'ROADMAP' | 'HYBRID'>('HYBRID');
 
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -217,21 +217,11 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
   const togglePlay = () => {
       if (trip.bgmType === 'FILE' && audioRef.current) {
-          if (isPlaying) {
-              audioRef.current.pause();
-              setIsPlaying(false);
-          } else {
-              audioRef.current.play();
-              setIsPlaying(true);
-          }
+          if (isPlaying) { audioRef.current.pause(); setIsPlaying(false); } 
+          else { audioRef.current.play(); setIsPlaying(true); }
       } else if (trip.bgmType === 'YOUTUBE' && youtubePlayerRef.current) {
-          if (typeof youtubePlayerRef.current.getPlayerState !== 'function') return;
-
-          if (isPlaying) {
-              youtubePlayerRef.current.pauseVideo();
-          } else {
-              youtubePlayerRef.current.playVideo();
-          }
+          if (isPlaying) { youtubePlayerRef.current.pauseVideo(); } 
+          else { youtubePlayerRef.current.playVideo(); }
       }
   };
 
@@ -240,23 +230,15 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
           audioRef.current.muted = !isMuted;
           setIsMuted(!isMuted);
       } else if (trip.bgmType === 'YOUTUBE' && youtubePlayerRef.current) {
-          if (typeof youtubePlayerRef.current.isMuted !== 'function') return;
-          
-          if (isMuted) {
-              youtubePlayerRef.current.unMute();
-          } else {
-              youtubePlayerRef.current.mute();
-          }
+          if (isMuted) { youtubePlayerRef.current.unMute(); } 
+          else { youtubePlayerRef.current.mute(); }
           setIsMuted(!isMuted);
       }
   };
 
   useEffect(() => {
     if(!trip.id) return;
-    const q = query(
-        collection(db, 'reviews'), 
-        where('tripId', '==', trip.id)
-    );
+    const q = query(collection(db, 'reviews'), where('tripId', '==', trip.id));
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const fetchedReviews: Review[] = [];
         snapshot.forEach(doc => fetchedReviews.push({ id: doc.id, ...doc.data() } as Review));
@@ -267,19 +249,13 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   }, [trip.id]);
 
   const handleSubmitReview = async () => {
-    if (!auth.currentUser) {
-        alert("로그인이 필요한 기능입니다.");
-        return;
-    }
-    if (!trip.id) return;
-    if (!newComment.trim()) return alert("리뷰 내용을 입력해주세요.");
-    
+    if (!auth.currentUser || !trip.id || !newComment.trim()) return;
     setIsSubmittingReview(true);
     try {
         await addDoc(collection(db, 'reviews'), {
             tripId: trip.id,
             userId: auth.currentUser.uid,
-            userName: auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || '익명',
+            userName: auth.currentUser.displayName || 'Anonymous',
             userPhoto: auth.currentUser.photoURL,
             rating: newRating,
             text: newComment,
@@ -287,490 +263,199 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         });
         setNewComment('');
         setNewRating(5);
-        alert("리뷰가 성공적으로 등록되었습니다!");
-    } catch (e: any) {
-        console.error("Error submitting review:", e);
-        alert(`리뷰 작성 중 오류가 발생했습니다: ${e.message}`);
-    } finally {
-        setIsSubmittingReview(false);
-    }
+    } catch (e) { console.error(e); } finally { setIsSubmittingReview(false); }
   };
-
-  const handleDeleteReview = async (reviewId: string) => {
-      if (!window.confirm("정말로 이 리뷰를 삭제하시겠습니까?")) return;
-      try {
-          await deleteDoc(doc(db, 'reviews', reviewId));
-      } catch (e) {
-          console.error("Error deleting review:", e);
-          alert("리뷰 삭제 중 오류가 발생했습니다.");
-      }
-  };
-
-  const startEditing = (review: Review) => {
-      setEditingReviewId(review.id);
-      setEditReviewText(review.text);
-      setEditReviewRating(review.rating);
-  };
-
-  const cancelEditing = () => {
-      setEditingReviewId(null);
-      setEditReviewText('');
-      setEditReviewRating(5);
-  };
-
-  const handleUpdateReview = async (reviewId: string) => {
-      if (!editReviewText.trim()) return alert("내용을 입력해주세요.");
-      try {
-          await updateDoc(doc(db, 'reviews', reviewId), {
-              text: editReviewText,
-              rating: editReviewRating
-          });
-          setEditingReviewId(null);
-      } catch (e) {
-          console.error("Error updating review:", e);
-          alert("리뷰 수정 중 오류가 발생했습니다.");
-      }
-  };
-
-  const toggleMapType = () => {
-    setMapType(prev => prev === 'ROADMAP' ? 'HYBRID' : 'ROADMAP');
-  };
-
-  const handleZoomIn = () => {
-    if (map) {
-        map.setLevel(map.getLevel() - 1, { animate: true });
-    }
-  };
-
-  const handleZoomOut = () => {
-    if (map) {
-        map.setLevel(map.getLevel() + 1, { animate: true });
-    }
-  };
-
-  const handleShareTrip = async () => {
-      const url = `${window.location.origin}${window.location.pathname}?tripId=${trip.id}`;
-      if (navigator.clipboard) {
-          await navigator.clipboard.writeText(url);
-          alert("여행지도 링크가 복사되었습니다!");
-      } else {
-          prompt("이 링크를 복사하세요:", url);
-      }
-  };
-
-  // Switch Map Type based on Dark/Light mode preference when changed, 
-  // but allow user override via toggleMapType later
-  useEffect(() => {
-      if (isDarkMode) {
-          setMapType('HYBRID');
-      } else {
-          setMapType('ROADMAP');
-      }
-  }, [isDarkMode]);
 
   useEffect(() => {
     if (!mapRef.current || sortedPoints.length === 0) return;
-
     mapRef.current.innerHTML = '';
-
     const startPos = new window.kakao.maps.LatLng(sortedPoints[0].lat, sortedPoints[0].lng);
-
     const options = {
       center: startPos,
       level: 9, 
       draggable: false, 
       zoomable: false, 
-      scrollwheel: false, 
       disableDoubleClickZoom: true,
       mapTypeId: mapType === 'HYBRID' ? window.kakao.maps.MapTypeId.HYBRID : window.kakao.maps.MapTypeId.ROADMAP
     };
     const newMap = new window.kakao.maps.Map(mapRef.current, options);
     setMap(newMap);
 
-    const resizeObserver = new ResizeObserver(() => {
-        newMap.relayout();
-        newMap.setCenter(newMap.getCenter());
-    });
+    const resizeObserver = new ResizeObserver(() => newMap.relayout());
     resizeObserver.observe(mapRef.current);
 
-    setTimeout(() => {
-        newMap.relayout();
-        newMap.setCenter(startPos);
-    }, 500);
-
     if (fullBackgroundPath.length > 0) {
-        const backgroundPolyline = new window.kakao.maps.Polyline({
+        new window.kakao.maps.Polyline({
           path: fullBackgroundPath,
           strokeWeight: 6,
           strokeColor: isDarkMode ? '#FFFFFF' : '#4F46E5',
-          strokeOpacity: 0.3,
+          strokeOpacity: 0.2,
           strokeStyle: 'solid'
-        });
-        backgroundPolyline.setMap(newMap);
+        }).setMap(newMap);
     }
 
     const activePolyline = new window.kakao.maps.Polyline({
-        path: [],
-        strokeWeight: 6,
-        strokeColor: '#EF4444',
-        strokeOpacity: 1,
-        strokeStyle: 'solid'
+        path: [], strokeWeight: 6, strokeColor: '#EF4444', strokeOpacity: 1, strokeStyle: 'solid'
     });
     activePolyline.setMap(newMap);
     setTraveledPolyline(activePolyline);
 
     sortedPoints.forEach((p, index) => {
-      const pos = new window.kakao.maps.LatLng(p.lat, p.lng);
       const markerContent = document.createElement('div');
       markerContent.innerHTML = `
-        <div style="
-          width: 24px; 
-          height: 24px; 
-          background: #4F46E5; 
-          color: white;
-          font-weight: bold;
-          font-size: 12px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 50%; 
-          box-shadow: 0 0 8px rgba(255,255,255,0.8);
-          border: 2px solid white;
-        ">${index + 1}</div>
-      `;
-      const customOverlay = new window.kakao.maps.CustomOverlay({
-        position: pos,
-        content: markerContent,
-        yAnchor: 0.5,
-        zIndex: 10
-      });
-      customOverlay.setMap(newMap);
+        <div style="width:28px; height:28px; background:#4F46E5; color:white; font-weight:900; font-size:12px; display:flex; align-items:center; justify-content:center; border-radius:10px; border:2px solid white; box-shadow:0 4px 10px rgba(0,0,0,0.3);">
+            ${index + 1}
+        </div>`;
+      new window.kakao.maps.CustomOverlay({
+        position: new window.kakao.maps.LatLng(p.lat, p.lng),
+        content: markerContent, yAnchor: 0.5, zIndex: 10
+      }).setMap(newMap);
     });
 
     const transportContent = document.createElement('div');
-    transportContent.className = 'transport-icon text-3xl filter drop-shadow-2xl transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2';
-    transportContent.style.textShadow = '0 4px 8px rgba(0,0,0,0.5)';
+    transportContent.className = 'transport-icon text-4xl filter drop-shadow-2xl transition-all duration-300';
     transportContent.innerText = getTransportIcon(sortedPoints[0].transportToNext);
-
-    const overlay = new window.kakao.maps.CustomOverlay({
-      position: startPos,
-      content: transportContent,
-      zIndex: 100
-    });
+    const overlay = new window.kakao.maps.CustomOverlay({ position: startPos, content: transportContent, zIndex: 100 });
     overlay.setMap(newMap);
     setTransportOverlay(overlay);
-
-    return () => {
-        resizeObserver.disconnect();
-    };
-
-  }, [fullBackgroundPath, sortedPoints, isDarkMode]); // Re-render map elements if mode changes
+    return () => resizeObserver.disconnect();
+  }, [fullBackgroundPath, sortedPoints, isDarkMode]);
 
   useEffect(() => {
-     if (!map || !window.kakao) return;
-     const typeId = mapType === 'HYBRID' ? window.kakao.maps.MapTypeId.HYBRID : window.kakao.maps.MapTypeId.ROADMAP;
-     map.setMapTypeId(typeId);
+     if (map && window.kakao) map.setMapTypeId(mapType === 'HYBRID' ? window.kakao.maps.MapTypeId.HYBRID : window.kakao.maps.MapTypeId.ROADMAP);
   }, [map, mapType]);
 
   useEffect(() => {
     const handleScroll = () => {
       if (!scrollContainerRef.current || !map || !transportOverlay || !traveledPolyline || pathSegments.length === 0) return;
-
-      const container = scrollContainerRef.current;
-      const scrollTop = container.scrollTop;
+      const scrollTop = scrollContainerRef.current.scrollTop;
       const vh = window.innerHeight;
-
       const scrollStart = vh;
       const sectionHeight = vh * SCROLL_HEIGHT_MULTIPLIER;
-      
       const relativeScroll = Math.max(0, scrollTop - scrollStart);
-      
       const currentSectionIndex = Math.floor(relativeScroll / sectionHeight);
       const sectionProgress = (relativeScroll % sectionHeight) / sectionHeight;
       
       if (currentSectionIndex < pathSegments.length) {
-          // --- TRAVELING MODE ---
           const segment = pathSegments[currentSectionIndex];
           const currentPos = getQuadraticBezierPoint(sectionProgress, segment.start, segment.control, segment.end);
           transportOverlay.setPosition(currentPos);
           map.panTo(currentPos);
-          
           const iconDiv = transportOverlay.getContent();
           if(iconDiv) {
-              const transportMode = segment.data.transportToNext;
-              const iconChar = getTransportIcon(transportMode);
-              if (iconDiv.innerText !== iconChar) {
-                  iconDiv.innerText = iconChar;
-              }
-
-              if (transportMode === 'PLANE') {
-                  const nextT = Math.min(sectionProgress + 0.1, 1);
-                  const nextPos = getQuadraticBezierPoint(nextT, segment.start, segment.control, segment.end);
-                  const dLat = nextPos.getLat() - currentPos.getLat();
-                  const dLng = nextPos.getLng() - currentPos.getLng();
-                  const angle = Math.atan2(dLat, dLng) * (180 / Math.PI);
+              const iconChar = getTransportIcon(segment.data.transportToNext);
+              if (iconDiv.innerText !== iconChar) iconDiv.innerText = iconChar;
+              if (segment.data.transportToNext === 'PLANE') {
+                  const nextPos = getQuadraticBezierPoint(Math.min(sectionProgress + 0.1, 1), segment.start, segment.control, segment.end);
+                  const angle = Math.atan2(nextPos.getLat() - currentPos.getLat(), nextPos.getLng() - currentPos.getLng()) * (180 / Math.PI);
                   iconDiv.style.transform = `translate(-50%, -50%) rotate(${45 - angle}deg)`;
-              } else {
-                  iconDiv.style.transform = `translate(-50%, -50%) rotate(0deg)`;
-              }
+              } else iconDiv.style.transform = `translate(-50%, -50%) rotate(0deg)`;
           }
-
           const historyPath = pathSegments.slice(0, currentSectionIndex).flatMap(s => s.curvePath);
           const currentPartialPath = generateCurvePath(segment.start, segment.end, segment.control, Math.floor(sectionProgress * 50));
           traveledPolyline.setPath([...historyPath, ...currentPartialPath]);
-
       } else {
-          // --- ARRIVED AT DESTINATION MODE ---
-          const lastPoint = sortedPoints[sortedPoints.length - 1];
-          const pos = new window.kakao.maps.LatLng(lastPoint.lat, lastPoint.lng);
-          
-          transportOverlay.setPosition(pos);
+          transportOverlay.setPosition(new window.kakao.maps.LatLng(sortedPoints[sortedPoints.length-1].lat, sortedPoints[sortedPoints.length-1].lng));
           traveledPolyline.setPath(fullBackgroundPath); 
-          
-          const iconDiv = transportOverlay.getContent();
-          if (iconDiv) {
-              iconDiv.style.transform = `translate(-50%, -50%) rotate(0deg)`;
-          }
       }
 
       sortedPoints.forEach((_, idx) => {
         const card = cardRefs.current[idx];
         if (!card) return;
-
-        let localProgress = 0;
-        if (currentSectionIndex === idx) localProgress = sectionProgress;
-        else if (currentSectionIndex > idx) localProgress = 1; 
-        else localProgress = 0; 
-
-        let opacity = 0;
-        let translateY = 0;
-        let translateX = 0;
-        let scale = 1;
-
-        if (localProgress < 0.10) {
-            opacity = localProgress / 0.10;
-            translateY = 30 * (1 - opacity); 
-            translateX = -20 * (1 - opacity);
-            scale = 0.95 + (0.05 * opacity);
-        } else if (localProgress < 0.85) {
-            opacity = 1;
-            translateY = 0;
-            translateX = 0;
-            scale = 1;
-        } else {
-            const exitProgress = (localProgress - 0.85) / 0.15;
-            opacity = 1 - exitProgress;
-            translateY = -80 * exitProgress; 
-            translateX = -20 * exitProgress;
-            scale = 1 - (0.05 * exitProgress);
+        let localProgress = currentSectionIndex === idx ? sectionProgress : currentSectionIndex > idx ? 1 : 0;
+        let opacity = 0, translateY = 0, translateX = 0, scale = 1;
+        if (localProgress < 0.15) {
+            opacity = localProgress / 0.15;
+            translateY = 40 * (1 - opacity); 
+            translateX = -40 * (1 - opacity);
+            scale = 0.9;
+        } else if (localProgress < 0.85) { opacity = 1; scale = 1; } 
+        else {
+            const exit = (localProgress - 0.85) / 0.15;
+            opacity = 1 - exit; translateY = -60 * exit; translateX = -40 * exit; scale = 1.05;
         }
-
         card.style.opacity = opacity.toString();
         card.style.transform = `translateY(${translateY}px) translateX(${translateX}px) scale(${scale})`;
         card.style.visibility = opacity <= 0.01 ? 'hidden' : 'visible';
       });
     };
-
-    const container = scrollContainerRef.current;
-    if (container) {
-      container.addEventListener('scroll', handleScroll);
-      handleScroll(); 
-    }
-    return () => {
-      if (container) {
-        container.removeEventListener('scroll', handleScroll);
-      }
-    };
-  }, [map, transportOverlay, traveledPolyline, pathSegments, fullBackgroundPath, sortedPoints]);
-
+    scrollContainerRef.current?.addEventListener('scroll', handleScroll);
+    return () => scrollContainerRef.current?.removeEventListener('scroll', handleScroll);
+  }, [map, transportOverlay, traveledPolyline, pathSegments, sortedPoints]);
 
   const buttonClass = isDarkMode 
-    ? "bg-black/40 hover:bg-black/60 backdrop-blur-md text-white border-white/20" 
-    : "bg-white/80 hover:bg-white text-gray-700 shadow-sm border-gray-300";
+    ? "bg-slate-900/60 hover:bg-slate-800 backdrop-blur-xl text-white border-white/10" 
+    : "bg-white/90 hover:bg-white text-gray-800 shadow-xl border-stone-200";
 
   return (
-    <div className={`fixed inset-0 z-50 font-sans transition-colors duration-500 ${isDarkMode ? 'bg-black text-white' : 'bg-gray-50 text-gray-900'}`}>
-      
-      {/* Background Map Layer */}
-      <div className={`fixed inset-0 z-0 ${isDarkMode ? 'bg-black' : 'bg-gray-100'}`}>
-        <div 
-            ref={mapRef} 
-            className={`w-full h-full transition-all duration-700 ${
-                isDarkMode 
-                ? (mapType === 'HYBRID' ? 'opacity-70' : 'opacity-40 grayscale-[30%] contrast-125') 
-                : 'opacity-100'
-            }`} 
-        />
-        <div className={`absolute inset-0 bg-gradient-to-b pointer-events-none transition-colors duration-500 ${
-            isDarkMode 
-            ? 'from-black/50 via-transparent to-black/80' 
-            : 'from-white/60 via-transparent to-gray-50/90'
-        }`} />
+    <div className={`fixed inset-0 z-50 transition-colors duration-1000 ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-stone-50 text-gray-900'}`}>
+      <div className="fixed inset-0 z-0 overflow-hidden">
+        <div ref={mapRef} className={`w-full h-full transition-all duration-700 ${isDarkMode ? 'opacity-50 grayscale contrast-125' : 'opacity-100'}`} />
+        <div className={`absolute inset-0 pointer-events-none ${isDarkMode ? 'bg-gradient-to-r from-slate-950/90 via-slate-950/20 to-transparent' : 'bg-gradient-to-r from-white/80 via-white/10 to-transparent'}`} />
       </div>
 
       <div id="youtube-player" className="hidden" />
 
-      {/* Top Controls */}
-      <div className="fixed top-6 right-6 z-50 flex gap-4 items-start">
-          
-          {/* Theme Toggle Switch */}
-          <div 
-            onClick={() => setIsDarkMode(!isDarkMode)}
-            className={`w-14 h-8 flex items-center rounded-full p-1 cursor-pointer transition-colors duration-300 shadow-lg border ${
-                isDarkMode ? 'bg-gray-800 border-gray-600' : 'bg-indigo-100 border-indigo-200'
-            }`}
-          >
-            <div 
-                className={`bg-white w-6 h-6 rounded-full shadow-md transform duration-300 ease-in-out flex items-center justify-center ${
-                    isDarkMode ? 'translate-x-6' : 'translate-x-0'
-                }`}
-            >
-                {isDarkMode ? <Moon size={14} className="text-gray-800"/> : <Sun size={14} className="text-orange-500"/>}
-            </div>
-          </div>
-
-          {trip.bgmType && trip.bgmType !== 'NONE' && (
-              <div className={`backdrop-blur-md p-2 rounded-full border shadow-lg flex items-center space-x-2 pr-4 transition-all ${buttonClass}`}>
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isPlaying ? 'bg-indigo-500 animate-pulse text-white' : 'bg-gray-500 text-white'}`}>
-                      <Music size={14} className={isPlaying ? 'animate-spin-slow' : ''} />
-                  </div>
-                  <div className="flex flex-col">
-                      <span className={`text-[10px] uppercase tracking-wider font-bold ${isDarkMode ? 'text-gray-300' : 'text-gray-500'}`}>BGM</span>
-                      <div className="flex items-center space-x-3">
-                        <button onClick={togglePlay} className="hover:text-indigo-400 transition">
-                            {isPlaying ? <Pause size={16} fill="currentColor"/> : <Play size={16} fill="currentColor"/>}
-                        </button>
-                        <button onClick={toggleMute} className="hover:text-indigo-400 transition">
-                            {isMuted ? <VolumeX size={16}/> : <Volume2 size={16}/>}
-                        </button>
-                      </div>
-                  </div>
-              </div>
-          )}
-
-          <div className="flex flex-col gap-2">
-            <button onClick={handleShareTrip} className={`p-3 rounded-full transition-all border shadow-lg group ${buttonClass}`}>
-                <LinkIcon size={20} />
-            </button>
-            <button onClick={toggleMapType} className={`p-3 rounded-full transition-all border shadow-lg group ${buttonClass}`}>
-                {mapType === 'ROADMAP' ? <Globe size={20} /> : <Layers size={20} />}
-            </button>
-            <button onClick={handleZoomIn} className={`p-3 rounded-full transition-all border shadow-lg group ${buttonClass}`}>
-                <Plus size={20} />
-            </button>
-            <button onClick={handleZoomOut} className={`p-3 rounded-full transition-all border shadow-lg group ${buttonClass}`}>
-                <Minus size={20} />
-            </button>
-            <button onClick={onClose} className={`p-3 rounded-full transition-all border shadow-lg group ${buttonClass}`}>
-                <X size={20} className="group-hover:rotate-90 transition-transform" />
-            </button>
+      {/* Dynamic Controls */}
+      <div className="fixed top-8 right-8 z-50 flex gap-4">
+          <div className={`backdrop-blur-2xl px-4 py-2 rounded-2xl border shadow-2xl flex items-center space-x-4 transition-all ${buttonClass}`}>
+              <button onClick={() => setIsDarkMode(!isDarkMode)} className="hover:text-indigo-400 p-1">
+                  {isDarkMode ? <Sun size={20}/> : <Moon size={20}/>}
+              </button>
+              <div className="w-px h-4 bg-gray-500/30" />
+              <button onClick={togglePlay} className="hover:text-indigo-400 p-1">{isPlaying ? <Pause size={20} fill="currentColor"/> : <Play size={20} fill="currentColor"/>}</button>
+              <button onClick={toggleMute} className="hover:text-indigo-400 p-1">{isMuted ? <VolumeX size={20}/> : <Volume2 size={20}/>}</button>
+              <div className="w-px h-4 bg-gray-500/30" />
+              <button onClick={onClose} className="hover:rotate-90 transition-transform p-1 text-red-500"><X size={24} /></button>
           </div>
       </div>
 
-      {/* Content Layer */}
-      <div 
-        ref={scrollContainerRef} 
-        className="relative z-10 w-full h-full overflow-y-auto no-scrollbar scroll-smooth"
-      >
-        {/* Hero Section */}
-        <div className="h-screen w-full flex flex-col justify-center items-center text-center p-8 text-white relative z-20 overflow-hidden">
-          {/* Hero Background Image */}
-          {trip.thumbnailUrl && (
-              <div className="absolute inset-0 z-[-1]">
-                  <img src={trip.thumbnailUrl} alt="Cover" className="w-full h-full object-cover opacity-60 blur-sm scale-110" />
-                  <div className="absolute inset-0 bg-black/50" />
-              </div>
-          )}
-
-          <div className="animate-fade-in-up max-w-4xl">
-            <span className="inline-block px-4 py-1 rounded-full border border-white/30 bg-black/30 backdrop-blur-sm text-sm font-light mb-6 tracking-widest uppercase">
-              TripFlow Journey
-            </span>
-            <h1 className="text-4xl md:text-6xl font-bold mb-6 leading-tight drop-shadow-2xl">
-              {trip.title}
-            </h1>
-            <div className="flex items-center justify-center space-x-6 text-white/80 text-sm md:text-base font-light tracking-wide">
-               <span className="flex items-center"><Clock size={16} className="mr-2"/> {new Date(trip.createdAt).toLocaleDateString()}</span>
-               <span className="w-1 h-1 bg-white rounded-full"/>
-               <span className="flex items-center"><MapPin size={16} className="mr-2"/> {sortedPoints.length} Checkpoints</span>
+      <div ref={scrollContainerRef} className="relative z-10 w-full h-full overflow-y-auto no-scrollbar scroll-smooth">
+        <div className="h-screen w-full flex flex-col justify-center items-center text-center p-8 relative overflow-hidden">
+          {trip.thumbnailUrl && <img src={trip.thumbnailUrl} className="absolute inset-0 z-[-1] w-full h-full object-cover blur-2xl scale-125 opacity-40" alt="" />}
+          <div className="animate-fade-in-up max-w-4xl space-y-6">
+            <span className={`inline-block px-5 py-2 rounded-full border text-xs font-black tracking-widest uppercase backdrop-blur-md ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-indigo-600/10 border-indigo-600/20 text-indigo-700'}`}>TripFlow Log</span>
+            <h1 className="text-6xl md:text-8xl font-black leading-tight drop-shadow-2xl italic">{trip.title}</h1>
+            <div className="flex items-center justify-center space-x-6 text-sm font-black opacity-60 uppercase tracking-tighter italic">
+               <span>{new Date(trip.createdAt).toLocaleDateString()}</span>
+               <span className="w-2 h-2 bg-indigo-600 rounded-full"/>
+               <span>{sortedPoints.length} Checkpoints</span>
             </div>
           </div>
-          
-          <div className="absolute bottom-10 animate-bounce text-white/70">
-            <div className="flex flex-col items-center gap-2">
-                <span className="text-xs tracking-widest uppercase">Scroll to Start</span>
-                <ArrowDown size={24} />
-            </div>
+          <div className="absolute bottom-12 animate-bounce flex flex-col items-center opacity-40">
+             <span className="text-[10px] font-black uppercase tracking-widest mb-2">Keep Scrolling</span>
+             <ArrowDown size={32} />
           </div>
         </div>
 
-        {/* Trip Points */}
         <div className="w-full">
             {sortedPoints.map((point, idx) => (
-            <div 
-                key={point.id} 
-                style={{ height: `${SCROLL_HEIGHT_MULTIPLIER * 100}vh` }}
-                className="w-full relative"
-            >
-                {/* Visual Timeline Guide (shifted left) */}
-                <div className={`absolute top-0 bottom-0 left-8 md:left-32 w-px transform ${isDarkMode ? 'bg-gradient-to-b from-white/0 via-white/10 to-white/0' : 'bg-gradient-to-b from-indigo-500/0 via-indigo-500/20 to-indigo-500/0'}`} />
-
-                {/* Card Container - Shifted to LEFT */}
-                <div className="sticky top-0 h-screen w-full flex items-center justify-start p-4 md:pl-12 lg:pl-20 overflow-hidden">
-                    <div 
-                        ref={el => cardRefs.current[idx] = el}
-                        className={`w-full max-w-sm md:max-w-md rounded-2xl overflow-hidden transform will-change-transform opacity-0 transition-colors duration-500 ${
-                            isDarkMode 
-                            ? 'bg-black/85 backdrop-blur-xl border border-white/10 shadow-2xl' 
-                            : 'bg-white/90 backdrop-blur-xl border border-gray-200 shadow-xl'
-                        }`}
-                    >
-                        <div className="relative h-48 md:h-56 overflow-hidden group">
-                            <img 
-                                src={point.photoUrl} 
-                                alt={point.title} 
-                                className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" 
-                            />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
-                            <div className="absolute top-3 left-3">
-                                <span className="bg-indigo-600 text-white px-2 py-0.5 rounded-full text-xs font-bold border border-white/20 shadow-lg">
-                                    STEP {idx + 1}
-                                </span>
-                            </div>
-                            <div className="absolute bottom-0 left-0 p-5 text-white w-full">
-                                <div className="flex items-center text-xs font-bold tracking-wider uppercase mb-1 text-indigo-300">
-                                    <Clock size={12} className="mr-1" />
-                                    {point.date.replace('T', ' ')}
-                                </div>
-                                <h2 className="text-xl md:text-2xl font-bold leading-tight text-white drop-shadow-md truncate">{point.title}</h2>
+            <div key={point.id} style={{ height: `${SCROLL_HEIGHT_MULTIPLIER * 100}vh` }} className="w-full relative">
+                <div className="sticky top-0 h-screen w-full flex items-center justify-start p-6 md:pl-20">
+                    <div ref={el => cardRefs.current[idx] = el} className={`w-full max-w-sm rounded-[2.5rem] overflow-hidden transform opacity-0 shadow-2xl transition-all duration-700 border ${isDarkMode ? 'bg-slate-900/90 backdrop-blur-2xl border-white/10' : 'bg-white/95 backdrop-blur-xl border-stone-200'}`}>
+                        <div className="relative h-64 group">
+                            <img src={point.photoUrl} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-1000" />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
+                            <div className="absolute top-6 left-6"><span className="bg-indigo-600 text-white px-3 py-1 rounded-xl text-[10px] font-black italic">POINT {idx + 1}</span></div>
+                            <div className="absolute bottom-0 left-0 p-8 w-full text-white">
+                                <h2 className="text-3xl font-black italic truncate">{point.title}</h2>
                             </div>
                         </div>
-
-                        <div className={`p-5 ${isDarkMode ? 'text-gray-200' : 'text-gray-700'}`}>
-                            <div className="flex items-start mb-4">
-                                <div className={`p-1.5 rounded-full mr-3 shrink-0 border ${isDarkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30' : 'bg-indigo-50 text-indigo-600 border-indigo-100'}`}>
-                                    <MapPin size={16} />
-                                </div>
+                        <div className="p-8 space-y-5">
+                            <div className="flex items-start">
+                                <div className={`p-2.5 rounded-2xl mr-4 border ${isDarkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30' : 'bg-indigo-50 text-indigo-600 border-indigo-100'}`}><MapPin size={20} /></div>
                                 <div className="min-w-0">
-                                    <h3 className={`text-[10px] font-bold uppercase tracking-wide mb-0.5 ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>Location</h3>
-                                    <p className={`text-base font-bold leading-none mb-0.5 truncate ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{point.locationName}</p>
-                                    <p className={`text-xs truncate ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>{point.address}</p>
+                                    <p className="text-lg font-black italic truncate">{point.locationName}</p>
+                                    <p className={`text-xs font-medium truncate opacity-60`}>{point.address}</p>
                                 </div>
                             </div>
-                            <div className="prose prose-invert max-w-none mb-4">
-                                <p className={`leading-relaxed text-sm md:text-base whitespace-pre-line line-clamp-4 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                                    {point.description}
-                                </p>
-                            </div>
+                            <p className={`text-base font-medium leading-relaxed italic ${isDarkMode ? 'text-slate-300' : 'text-stone-600'}`}>{point.description}</p>
                             {idx < sortedPoints.length - 1 && (
-                                <div className={`border-t pt-3 flex items-center justify-between ${isDarkMode ? 'border-white/10' : 'border-gray-100'}`}>
-                                    <div className={`flex items-center text-xs font-medium ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                                        <Navigation size={12} className="mr-1" />
-                                        <span>Next Destination</span>
-                                    </div>
-                                    <div className={`flex items-center px-2 py-1 rounded-full text-xs font-bold border ${isDarkMode ? 'bg-indigo-900/30 text-indigo-300 border-indigo-500/30' : 'bg-indigo-50 text-indigo-600 border-indigo-100'}`}>
-                                        <span className="mr-1">{getTransportIcon(point.transportToNext)}</span>
-                                        <span>{getTransportLabel(point.transportToNext)}</span>
+                                <div className={`pt-6 border-t flex items-center justify-between ${isDarkMode ? 'border-white/10' : 'border-stone-100'}`}>
+                                    <span className="text-[10px] font-black uppercase opacity-40">Next Step</span>
+                                    <div className={`flex items-center px-4 py-2 rounded-2xl text-xs font-black italic border ${isDarkMode ? 'bg-indigo-950/40 border-indigo-500/30' : 'bg-stone-100 border-stone-200'}`}>
+                                        <span className="mr-2">{getTransportIcon(point.transportToNext)}</span>
+                                        {getTransportLabel(point.transportToNext)}
                                     </div>
                                 </div>
                             )}
@@ -781,129 +466,42 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
             ))}
         </div>
 
-        {/* Outro */}
-        <div className={`min-h-screen flex flex-col justify-start items-center p-4 pt-20 relative z-20 pb-20 transition-colors duration-500 ${isDarkMode ? 'text-white bg-gradient-to-t from-black via-black/90 to-transparent' : 'text-gray-900 bg-gradient-to-t from-gray-50 via-gray-50/90 to-transparent'}`}>
-            <h2 className="text-3xl font-bold mb-4 drop-shadow-lg">End of Journey</h2>
-            
-            <div className="flex space-x-3 mb-10">
-                <button 
-                    onClick={() => {
-                        if(scrollContainerRef.current) scrollContainerRef.current.scrollTo({top: 0, behavior: 'smooth'});
-                    }}
-                    className={`px-5 py-2 backdrop-blur-md rounded-full text-sm font-semibold transition border ${isDarkMode ? 'bg-white/10 hover:bg-white/20 text-white border-white/30' : 'bg-white hover:bg-gray-100 text-gray-700 border-gray-300 shadow-sm'}`}
-                >
-                    다시 보기
-                </button>
-                <button 
-                    onClick={onClose}
-                    className="px-6 py-2 bg-indigo-600 text-white rounded-full text-sm font-bold hover:bg-indigo-700 transition shadow-xl"
-                >
-                    지도 닫기
-                </button>
+        <div className={`min-h-screen flex flex-col justify-center items-center p-8 relative z-20 pb-32 transition-colors duration-1000 ${isDarkMode ? 'bg-slate-950' : 'bg-stone-50'}`}>
+            <h2 className="text-5xl font-black italic mb-8">End of the Road</h2>
+            <div className="flex gap-6 mb-20">
+                <button onClick={() => scrollContainerRef.current?.scrollTo({top: 0, behavior: 'smooth'})} className={`px-10 py-4 rounded-[1.5rem] text-sm font-black italic border transition-all ${isDarkMode ? 'bg-white/5 hover:bg-white/10 border-white/10' : 'bg-white hover:bg-stone-100 border-stone-200 shadow-xl'}`}>Replay Journey</button>
+                <button onClick={onClose} className="px-10 py-4 bg-indigo-600 text-white rounded-[1.5rem] text-sm font-black italic hover:bg-indigo-700 transition shadow-2xl shadow-indigo-500/40">Finish Log</button>
             </div>
 
-            {/* Review Section */}
-            <div className={`w-full max-w-md backdrop-blur-xl rounded-2xl p-6 border transition-colors duration-500 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-white/80 border-gray-200 shadow-xl'}`}>
-                <h3 className="text-xl font-bold mb-4 flex items-center">
-                    <Star className="text-yellow-400 mr-2" fill="currentColor" size={20} /> 
-                    여행자 리뷰 <span className={`text-xs font-normal ml-2 ${isDarkMode ? 'text-white/60' : 'text-gray-500'}`}>({reviews.length})</span>
+            <div className={`w-full max-w-xl rounded-[3rem] p-10 border shadow-2xl ${isDarkMode ? 'bg-slate-900/50 border-white/10' : 'bg-white border-stone-200'}`}>
+                <h3 className="text-3xl font-black italic mb-8 flex items-center">
+                    <Star className="text-yellow-400 mr-3" fill="currentColor" size={28} /> Traveler's Reviews
                 </h3>
-
                 {auth.currentUser ? (
-                    <div className={`mb-6 p-4 rounded-xl border transition-colors ${isDarkMode ? 'bg-white/5 border-white/5' : 'bg-gray-50 border-gray-100'}`}>
-                        <div className="flex items-center justify-between mb-3">
-                            <span className={`font-medium text-sm ${isDarkMode ? 'text-white/90' : 'text-gray-700'}`}>별점 남기기</span>
-                            <div className="flex space-x-1">
-                                {[1, 2, 3, 4, 5].map((star) => (
-                                    <button key={star} onClick={() => setNewRating(star)} className="focus:outline-none transition-transform hover:scale-110">
-                                        <Star 
-                                            size={20} 
-                                            className={star <= newRating ? "text-yellow-400" : "text-gray-300"} 
-                                            fill={star <= newRating ? "currentColor" : "currentColor"}
-                                        />
-                                    </button>
-                                ))}
-                            </div>
+                    <div className="mb-10 space-y-4">
+                        <div className="flex justify-between items-center"><span className="text-xs font-black uppercase opacity-50 italic">Rate the Trip</span>
+                            <div className="flex space-x-1">{[1,2,3,4,5].map(s => <button key={s} onClick={() => setNewRating(s)} className="transition-transform hover:scale-125"><Star size={24} className={s <= newRating ? "text-yellow-400" : "text-gray-600"} fill="currentColor"/></button>)}</div>
                         </div>
-                        <div className="flex gap-2">
-                            <input 
-                                type="text" 
-                                value={newComment}
-                                onChange={(e) => setNewComment(e.target.value)}
-                                placeholder="감상평을 남겨주세요..."
-                                className={`flex-1 border-transparent text-sm transition outline-none rounded-lg px-3 py-2 ${isDarkMode ? 'bg-white/10 focus:bg-white/20 text-white placeholder-gray-400' : 'bg-white border border-gray-200 focus:border-indigo-500 text-gray-900 placeholder-gray-400'}`}
-                                onKeyDown={(e) => e.key === 'Enter' && handleSubmitReview()}
-                            />
-                            <button onClick={handleSubmitReview} disabled={isSubmittingReview} className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-2 font-bold disabled:opacity-50 transition">
-                                <Send size={16} />
-                            </button>
+                        <div className="flex gap-3">
+                            <input value={newComment} onChange={e => setNewComment(e.target.value)} placeholder="당신의 감상을 남겨주세요..." className={`flex-1 px-6 py-4 rounded-2xl text-sm font-medium outline-none transition ${isDarkMode ? 'bg-slate-800 focus:bg-slate-700' : 'bg-stone-100 focus:bg-stone-200'}`} />
+                            <button onClick={handleSubmitReview} className="bg-indigo-600 hover:bg-indigo-700 text-white p-4 rounded-2xl transition shadow-xl"><Send size={20}/></button>
                         </div>
                     </div>
-                ) : (
-                    <div className="mb-6 p-4 bg-indigo-900/10 rounded-xl border border-indigo-500/20 text-center">
-                        <p className="text-sm text-indigo-500 mb-2">여행에 대한 감상을 남기고 싶으신가요?</p>
-                        <button onClick={() => alert('상단 메뉴에서 로그인해주세요!')} className="text-xs font-bold bg-indigo-600 text-white px-3 py-1.5 rounded-full hover:bg-indigo-700 transition">
-                            로그인하고 리뷰 쓰기
-                        </button>
-                    </div>
-                )}
+                ) : <div className="mb-10 p-8 text-center bg-indigo-600/10 rounded-[2rem] border border-indigo-600/20"><p className="text-sm font-black italic mb-4">Leave your footprint. Login to review.</p></div>}
 
-                <div className="space-y-3 overflow-y-auto max-h-64 no-scrollbar pr-1">
-                    {reviews.length === 0 ? (
-                        <p className={`text-center py-4 text-xs ${isDarkMode ? 'text-white/50' : 'text-gray-400'}`}>아직 작성된 리뷰가 없습니다.</p>
-                    ) : (
-                        reviews.map((review) => (
-                            <div key={review.id} className={`p-3 rounded-lg border relative group transition-colors ${isDarkMode ? 'bg-black/40 border-white/5' : 'bg-white border-gray-100 shadow-sm'}`}>
-                                <div className="flex justify-between items-start mb-1">
-                                    <div className="flex items-center">
-                                        <div className="w-6 h-6 rounded-full bg-indigo-500 flex items-center justify-center text-xs font-bold mr-2 overflow-hidden border border-white/20">
-                                            {review.userPhoto ? <img src={review.userPhoto} alt="user" className="w-full h-full object-cover"/> : review.userName[0]}
-                                        </div>
-                                        <div>
-                                            <div className={`font-bold text-xs ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>{review.userName}</div>
-                                            {editingReviewId === review.id ? (
-                                                <div className="flex items-center space-x-1 mt-1">
-                                                     {[1, 2, 3, 4, 5].map((star) => (
-                                                        <button key={star} onClick={() => setEditReviewRating(star)} className="focus:outline-none">
-                                                            <Star size={10} className={star <= editReviewRating ? "text-yellow-400" : "text-gray-300"} fill={star <= editReviewRating ? "currentColor" : "currentColor"}/>
-                                                        </button>
-                                                     ))}
-                                                </div>
-                                            ) : (
-                                                <div className="flex items-center text-yellow-400">
-                                                    {[...Array(review.rating)].map((_, i) => <Star key={i} size={8} fill="currentColor" />)}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <span className={`text-[10px] ${isDarkMode ? 'text-white/40' : 'text-gray-400'}`}>{new Date(review.createdAt).toLocaleDateString()}</span>
+                <div className="space-y-6 max-h-[400px] overflow-y-auto no-scrollbar">
+                    {reviews.map(r => (
+                        <div key={r.id} className={`p-6 rounded-[2rem] border transition ${isDarkMode ? 'bg-slate-800/40 border-white/5' : 'bg-stone-50 border-stone-100'}`}>
+                            <div className="flex justify-between items-start mb-3">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-full bg-indigo-600 overflow-hidden border-2 border-white">{r.userPhoto ? <img src={r.userPhoto} className="w-full h-full object-cover"/> : r.userName[0]}</div>
+                                    <div><p className="font-black italic text-sm">{r.userName}</p><div className="flex text-yellow-400 space-x-0.5">{[...Array(r.rating)].map((_, i) => <Star key={i} size={10} fill="currentColor"/>)}</div></div>
                                 </div>
-                                {editingReviewId === review.id ? (
-                                    <div className="mt-2">
-                                        <input 
-                                            type="text" 
-                                            value={editReviewText}
-                                            onChange={(e) => setEditReviewText(e.target.value)}
-                                            className={`w-full text-xs p-2 rounded mb-2 border focus:outline-none ${isDarkMode ? 'bg-white/10 text-white border-white/20' : 'bg-gray-50 text-gray-800 border-gray-300'}`}
-                                            autoFocus
-                                        />
-                                        <div className="flex justify-end gap-2">
-                                            <button onClick={cancelEditing} className={`p-1 rounded ${isDarkMode ? 'text-gray-400 hover:text-white bg-white/10' : 'text-gray-500 hover:text-gray-700 bg-gray-100'}`}><X size={12} /></button>
-                                            <button onClick={() => handleUpdateReview(review.id)} className="p-1 text-green-400 hover:text-green-300 rounded bg-green-500/20 border border-green-500/30"><Check size={12} /></button>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <p className={`text-xs ml-8 leading-snug ${isDarkMode ? 'text-white/80' : 'text-gray-600'}`}>{review.text}</p>
-                                )}
-                                {auth.currentUser?.uid === review.userId && editingReviewId !== review.id && (
-                                    <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button onClick={() => startEditing(review)} className={`p-1 rounded ${isDarkMode ? 'text-gray-400 hover:text-indigo-400 bg-black/50' : 'text-gray-400 hover:text-indigo-600 bg-gray-100'}`} title="수정"><Pencil size={10} /></button>
-                                        <button onClick={() => handleDeleteReview(review.id)} className={`p-1 rounded ${isDarkMode ? 'text-gray-400 hover:text-red-400 bg-black/50' : 'text-gray-400 hover:text-red-600 bg-gray-100'}`} title="삭제"><Trash2 size={10} /></button>
-                                    </div>
-                                )}
+                                <span className="text-[10px] font-black opacity-30 uppercase italic">{new Date(r.createdAt).toLocaleDateString()}</span>
                             </div>
-                        ))
-                    )}
+                            <p className="text-sm font-medium ml-13 leading-relaxed opacity-80">{r.text}</p>
+                        </div>
+                    ))}
                 </div>
             </div>
         </div>

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import Auth from './components/Auth';
 import TripEditor from './components/TripEditor';
@@ -7,14 +8,18 @@ import { auth, db } from './firebase';
 import { User, onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, query, where, getDocs, deleteDoc, doc, getDoc } from 'firebase/firestore';
 import { TripData } from './types';
-import { Map, Plus, LogOut, Loader2, MapPin, Pencil, Trash2, Download, Share2, LogIn, User as UserIcon, Globe, Compass, AlertCircle, Lock } from 'lucide-react';
+import { Map, Plus, LogOut, Loader2, MapPin, Pencil, Trash2, Download, Share2, LogIn, User as UserIcon, Globe, Compass, AlertCircle, Lock, Sun, Moon } from 'lucide-react';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [authInitialized, setAuthInitialized] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('theme');
+    return saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  });
   
   const [view, setView] = useState<'LIST' | 'create' | 'EDIT' | 'VIEW'>('LIST');
-  const [activeTab, setActiveTab] = useState<'MINE' | 'ALL'>('ALL'); // Default to ALL for guests
+  const [activeTab, setActiveTab] = useState<'MINE' | 'ALL'>('ALL'); 
   
   const [trips, setTrips] = useState<TripData[]>([]);
   const [isLoadingTrips, setIsLoadingTrips] = useState(false);
@@ -22,23 +27,25 @@ const App: React.FC = () => {
   const [selectedTrip, setSelectedTrip] = useState<TripData | null>(null);
   const [pendingTripId, setPendingTripId] = useState<string | null>(null);
 
-  // Modal States
   const [showAuthModal, setShowAuthModal] = useState(false);
-  
-  // PWA Install State
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isIOS, setIsIOS] = useState(false);
 
-  // 1. Auth & PWA Listener & URL Check
   useEffect(() => {
-    // Detect iOS
+    localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
+
+  useEffect(() => {
     const userAgent = window.navigator.userAgent.toLowerCase();
     const isIosDevice = /iphone|ipad|ipod/.test(userAgent);
     setIsIOS(isIosDevice);
 
-    // PWA Install Event Listener
     const handleBeforeInstallPrompt = (e: Event) => {
-      console.log('PWA: beforeinstallprompt event fired');
       e.preventDefault();
       setDeferredPrompt(e);
     };
@@ -57,7 +64,6 @@ const App: React.FC = () => {
       }
     });
 
-    // Check for Direct Link (?tripId=xyz)
     const params = new URLSearchParams(window.location.search);
     const tid = params.get('tripId');
     if (tid) {
@@ -71,59 +77,27 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // 2. Secure Trip Loading (Handle Pending Link)
   useEffect(() => {
       const loadPendingTrip = async () => {
           if (!pendingTripId || !authInitialized) return;
-
           try {
               const docRef = doc(db, 'trips', pendingTripId);
               const docSnap = await getDoc(docRef);
-              
               if (docSnap.exists()) {
                   const tripData = { id: docSnap.id, ...docSnap.data() } as TripData;
-                  
-                  // Security Check for Direct Link
-                  if (tripData.visibility === 'PRIVATE') {
-                      if (!user || user.uid !== tripData.userId) {
-                          alert("이 여행은 비공개로 설정되어 있습니다. 작성자만 볼 수 있습니다.");
-                          setPendingTripId(null);
-                          return;
-                      }
+                  if (tripData.visibility === 'PRIVATE' && (!user || user.uid !== tripData.userId)) {
+                      alert("비공개 여행입니다.");
+                      setPendingTripId(null);
+                      return;
                   }
-                  
                   setSelectedTrip(tripData);
                   setView('VIEW');
-              } else {
-                  alert("존재하지 않는 여행입니다.");
               }
-          } catch (e) {
-              console.error("Error loading linked trip:", e);
-              alert("여행 정보를 불러오는 중 오류가 발생했습니다.");
-          } finally {
-              setPendingTripId(null);
-          }
+          } catch (e) { console.error(e); } finally { setPendingTripId(null); }
       };
-
       loadPendingTrip();
   }, [pendingTripId, authInitialized, user]);
 
-  // 3. Security Watchdog (Runtime Protection)
-  useEffect(() => {
-      // If currently viewing a trip, check permissions dynamically (e.g., after logout)
-      if (view === 'VIEW' && selectedTrip && selectedTrip.visibility === 'PRIVATE') {
-          if (authInitialized) {
-              if (!user || user.uid !== selectedTrip.userId) {
-                  alert("로그아웃되어 비공개 여행을 볼 수 없습니다.");
-                  setSelectedTrip(null);
-                  setView('LIST');
-                  setActiveTab('ALL');
-              }
-          }
-      }
-  }, [view, selectedTrip, user, authInitialized]);
-
-  // 4. Fetch Trips Logic
   useEffect(() => {
     if (authInitialized && view === 'LIST') {
       fetchTrips();
@@ -136,67 +110,22 @@ const App: React.FC = () => {
     try {
       let q;
       if (activeTab === 'MINE' && user) {
-         q = query(
-            collection(db, 'trips'),
-            where('userId', '==', user.uid)
-        );
+         q = query(collection(db, 'trips'), where('userId', '==', user.uid));
       } else {
          q = query(collection(db, 'trips'));
       }
-
       const querySnapshot = await getDocs(q);
       const fetchedTrips: TripData[] = [];
       querySnapshot.forEach((doc) => {
         fetchedTrips.push({ id: doc.id, ...doc.data() } as TripData);
       });
-      
-      // Client-side Filtering Logic
-      let visibleTrips = fetchedTrips;
-
-      if (activeTab === 'ALL') {
-          // In 'ALL' (Explore) tab, remove PRIVATE trips
-          visibleTrips = fetchedTrips.filter(t => t.visibility !== 'PRIVATE');
-      }
-      
+      let visibleTrips = activeTab === 'ALL' ? fetchedTrips.filter(t => t.visibility !== 'PRIVATE') : fetchedTrips;
       visibleTrips.sort((a,b) => b.createdAt - a.createdAt);
       setTrips(visibleTrips);
     } catch (error: any) {
-      console.error("Error fetching trips:", error);
-      if (error.code === 'permission-denied') {
-          setFetchError("데이터를 불러올 권한이 없습니다. Firestore Rules를 확인해주세요.");
-      } else {
-          setFetchError("여행 목록을 불러오는 중 오류가 발생했습니다.");
-      }
+      setFetchError("데이터를 불러오는 중 오류가 발생했습니다.");
     } finally {
       setIsLoadingTrips(false);
-    }
-  };
-
-  const handleCreateTripClick = () => {
-      if (user) {
-          setView('create');
-      } else {
-          setShowAuthModal(true);
-      }
-  };
-
-  const handleEditTrip = (e: React.MouseEvent, trip: TripData) => {
-    e.stopPropagation();
-    setSelectedTrip(trip);
-    setView('EDIT');
-  };
-
-  const handleDeleteTrip = async (e: React.MouseEvent, tripId: string) => {
-    e.stopPropagation();
-    if (window.confirm("정말로 이 여행 기록을 삭제하시겠습니까? 복구할 수 없습니다.")) {
-        try {
-            await deleteDoc(doc(db, "trips", tripId));
-            setTrips(trips.filter(t => t.id !== tripId));
-            alert("삭제되었습니다.");
-        } catch (error) {
-            console.error("Error deleting trip:", error);
-            alert("삭제 중 오류가 발생했습니다.");
-        }
     }
   };
 
@@ -208,192 +137,155 @@ const App: React.FC = () => {
     }
   };
 
-  const handleShareApp = async () => {
-      if (navigator.share) {
-          try {
-              await navigator.share({
-                  title: 'TripFlow',
-                  text: '나만의 다이나믹한 여행 지도를 만들어보세요!',
-                  url: window.location.origin
-              });
-          } catch (err) {
-              console.log('Share canceled');
-          }
-      } else {
-          try {
-              await navigator.clipboard.writeText(window.location.origin);
-              alert('주소가 클립보드에 복사되었습니다.');
-          } catch (err) {
-              alert('공유하기를 지원하지 않는 브라우저입니다.');
-          }
-      }
-  };
+  if (!authInitialized) return <div className={`h-screen flex justify-center items-center ${isDarkMode ? 'bg-slate-950' : 'bg-stone-50'}`}><Loader2 className="animate-spin text-indigo-600" size={48} /></div>;
 
-  const handleInstallClick = async () => {
-      if (deferredPrompt) {
-          deferredPrompt.prompt();
-          const { outcome } = await deferredPrompt.userChoice;
-          console.log(`User response to the install prompt: ${outcome}`);
-          setDeferredPrompt(null);
-      }
-  };
-
-  if (!authInitialized) return <div className="h-screen flex justify-center items-center bg-gray-50"><Loader2 className="animate-spin text-indigo-600" size={48} /></div>;
-
-  if (view === 'create') {
-    return <TripEditor onFinish={() => setView('LIST')} />;
-  }
-
-  if (view === 'EDIT') {
-      return <TripEditor onFinish={() => { setSelectedTrip(null); setView('LIST'); }} initialData={selectedTrip} />;
-  }
-
-  if (view === 'VIEW' && selectedTrip) {
-    return <TripViewer trip={selectedTrip} onClose={() => { setSelectedTrip(null); setView('LIST'); }} />;
-  }
+  if (view === 'create') return <TripEditor onFinish={() => setView('LIST')} />;
+  if (view === 'EDIT') return <TripEditor onFinish={() => { setSelectedTrip(null); setView('LIST'); }} initialData={selectedTrip} />;
+  if (view === 'VIEW' && selectedTrip) return <TripViewer trip={selectedTrip} onClose={() => { setSelectedTrip(null); setView('LIST'); }} />;
 
   return (
-    <div className="min-h-screen bg-gray-50 font-sans">
+    <div className={`min-h-screen transition-colors duration-500 ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-stone-50 text-gray-900'}`}>
       <InstallPrompt deferredPrompt={deferredPrompt} setDeferredPrompt={setDeferredPrompt} isIOS={isIOS} />
       {showAuthModal && <Auth onClose={() => setShowAuthModal(false)} />}
 
-      <header className="bg-white shadow-sm sticky top-0 z-40 transition-all">
+      <header className={`sticky top-0 z-40 backdrop-blur-md border-b transition-colors ${isDarkMode ? 'bg-slate-950/80 border-slate-800' : 'bg-white/80 border-stone-200 shadow-sm'}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex justify-between items-center">
           <div className="flex items-center space-x-2 cursor-pointer group" onClick={() => setView('LIST')}>
-            <div className="bg-indigo-600 p-1.5 rounded-lg text-white group-hover:bg-indigo-700 transition">
-                <Map size={20} />
+            <div className="bg-indigo-600 p-2 rounded-xl text-white group-hover:bg-indigo-700 transition-all transform group-hover:rotate-6">
+                <Map size={22} />
             </div>
-            <h1 className="text-xl font-extrabold text-gray-900 tracking-tight">TripFlow</h1>
+            <h1 className="text-2xl font-black tracking-tighter italic">TripFlow</h1>
           </div>
           
           <div className="flex items-center space-x-2 sm:space-x-4">
-             {deferredPrompt && (
-                 <button onClick={handleInstallClick} className="flex items-center bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-indigo-100 transition animate-pulse">
-                    <Download size={14} className="mr-1.5" /> 앱 설치
-                 </button>
-             )}
+             {/* Theme Toggle */}
+             <button 
+                onClick={() => setIsDarkMode(!isDarkMode)}
+                className={`p-2 rounded-xl transition-all ${isDarkMode ? 'bg-slate-800 text-yellow-400 hover:bg-slate-700' : 'bg-stone-100 text-indigo-600 hover:bg-stone-200'}`}
+             >
+                {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+             </button>
 
-             <button onClick={handleShareApp} className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-gray-100 rounded-full transition" title="앱 공유하기">
+             <button onClick={() => {
+                 if(navigator.share) navigator.share({title: 'TripFlow', url: window.location.origin});
+                 else { navigator.clipboard.writeText(window.location.origin); alert('복사되었습니다.'); }
+             }} className={`p-2 rounded-xl transition-all ${isDarkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-stone-500 hover:bg-stone-100'}`}>
                 <Share2 size={20} />
              </button>
 
-             <div className="h-6 w-px bg-gray-200 mx-1 sm:mx-2"></div>
+             <div className={`h-6 w-px mx-1 ${isDarkMode ? 'bg-slate-800' : 'bg-stone-200'}`}></div>
 
              {user ? (
                  <div className="flex items-center gap-3">
-                     <div className="hidden sm:flex flex-col items-end">
-                        <span className="text-xs font-bold text-gray-700">{user.displayName || '여행자'}</span>
-                        <span className="text-[10px] text-gray-400">{user.email}</span>
-                     </div>
-                     <button onClick={handleSignOut} className="text-gray-400 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-full transition" title="로그아웃">
+                     <button onClick={handleSignOut} className={`p-2 rounded-xl transition-all ${isDarkMode ? 'text-slate-400 hover:text-red-400 hover:bg-slate-800' : 'text-stone-400 hover:text-red-500 hover:bg-red-50'}`}>
                         <LogOut size={20} />
                      </button>
                  </div>
              ) : (
-                 <button onClick={() => setShowAuthModal(true)} className="flex items-center bg-gray-900 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-800 transition shadow-lg shadow-gray-200">
-                    <LogIn size={16} className="mr-2" /> <span className="hidden sm:inline">로그인</span>
+                 <button onClick={() => setShowAuthModal(true)} className="bg-indigo-600 text-white px-5 py-2 rounded-xl text-sm font-bold hover:bg-indigo-700 transition shadow-lg shadow-indigo-500/20">
+                    로그인
                  </button>
              )}
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
-        <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-800 flex items-center">
-                {activeTab === 'MINE' ? <><UserIcon size={24} className="mr-2 text-indigo-500"/> 나의 여행 기록</> : <><Compass size={24} className="mr-2 text-indigo-500"/> 여행지 둘러보기</>}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        <div className="flex flex-col sm:flex-row justify-between items-end mb-10 gap-6">
+          <div className="max-w-xl">
+            <h2 className="text-4xl font-black mb-3 leading-tight tracking-tight">
+                {activeTab === 'MINE' ? '나만의 여행 서재' : '전 세계 여행자의 발자취'}
             </h2>
-            <p className="text-gray-500 text-sm mt-1">{activeTab === 'MINE' ? '내가 기록한 멋진 여행의 추억들을 관리하세요.' : '다른 여행자들의 발자취를 따라가보세요.'}</p>
+            <p className={`text-lg font-medium ${isDarkMode ? 'text-slate-400' : 'text-stone-500'}`}>
+                {activeTab === 'MINE' ? '잊고 싶지 않은 소중한 순간들이 여기 모두 담겨있어요.' : '다른 사람들은 어떤 길을 걸었을까요? 새로운 영감을 얻어보세요.'}
+            </p>
           </div>
           
-          <button onClick={handleCreateTripClick} className="w-full sm:w-auto flex items-center justify-center bg-indigo-600 text-white px-5 py-3 rounded-xl hover:bg-indigo-700 transition shadow-lg hover:shadow-indigo-500/30 font-bold transform hover:-translate-y-0.5 active:translate-y-0">
-            <Plus size={20} className="mr-2" /> 여행 기록하기
+          <button onClick={() => user ? setView('create') : setShowAuthModal(true)} className="group flex items-center bg-indigo-600 text-white px-8 py-4 rounded-2xl hover:bg-indigo-700 transition-all shadow-2xl shadow-indigo-500/40 font-black text-lg transform hover:-translate-y-1 active:scale-95">
+            <Plus size={24} className="mr-2 group-hover:rotate-90 transition-transform" /> 새로운 여정 시작
           </button>
         </div>
 
-        <div className="flex border-b border-gray-200 mb-8">
-            <button onClick={() => setActiveTab('ALL')} className={`px-6 py-3 text-sm font-bold flex items-center transition-all ${activeTab === 'ALL' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}>
-                <Globe size={16} className="mr-2"/> 둘러보기
+        <div className={`flex border-b mb-12 ${isDarkMode ? 'border-slate-800' : 'border-stone-200'}`}>
+            <button onClick={() => setActiveTab('ALL')} className={`px-8 py-4 text-sm font-black flex items-center transition-all border-b-2 ${activeTab === 'ALL' ? 'text-indigo-600 border-indigo-600' : 'text-stone-400 border-transparent hover:text-stone-600'}`}>
+                <Globe size={18} className="mr-2"/> 여행 둘러보기
             </button>
             {user && (
-                <button onClick={() => setActiveTab('MINE')} className={`px-6 py-3 text-sm font-bold flex items-center transition-all ${activeTab === 'MINE' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}>
-                    <UserIcon size={16} className="mr-2"/> 내 여행
+                <button onClick={() => setActiveTab('MINE')} className={`px-8 py-4 text-sm font-black flex items-center transition-all border-b-2 ${activeTab === 'MINE' ? 'text-indigo-600 border-indigo-600' : 'text-stone-400 border-transparent hover:text-stone-600'}`}>
+                    <Compass size={18} className="mr-2"/> 나의 스크랩북
                 </button>
             )}
         </div>
 
         {isLoadingTrips ? (
-           <div className="flex justify-center py-20"><Loader2 className="animate-spin text-indigo-600" size={32} /></div>
+           <div className="flex justify-center py-24"><Loader2 className="animate-spin text-indigo-600" size={40} /></div>
         ) : fetchError ? (
-           <div className="bg-red-50 border border-red-200 rounded-xl p-8 text-center max-w-lg mx-auto">
-               <AlertCircle size={32} className="text-red-500 mx-auto mb-3"/>
-               <h3 className="text-red-800 font-bold mb-2">데이터 로드 실패</h3>
-               <p className="text-red-600 text-sm">{fetchError}</p>
+           <div className={`rounded-3xl p-12 text-center max-w-lg mx-auto border ${isDarkMode ? 'bg-red-950/20 border-red-900/50' : 'bg-red-50 border-red-100'}`}>
+               <AlertCircle size={48} className="text-red-500 mx-auto mb-4"/>
+               <h3 className="text-xl font-black mb-2">문제가 발생했습니다</h3>
+               <p className="text-red-400 font-medium">{fetchError}</p>
            </div>
         ) : trips.length === 0 ? (
-          <div className="text-center py-20 bg-white rounded-2xl shadow-sm border border-dashed border-gray-300">
-            <div className="bg-gray-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4"><Map size={32} className="text-gray-400" /></div>
-            <h3 className="text-gray-800 font-bold text-lg mb-1">{activeTab === 'MINE' ? '아직 기록된 여행이 없습니다' : '등록된 여행이 없습니다'}</h3>
-            <p className="text-gray-500 mb-6">{activeTab === 'MINE' ? '첫 번째 여행을 기록하고 추억을 남겨보세요!' : '가장 먼저 여행 지도를 공유해보세요!'}</p>
-            <button onClick={handleCreateTripClick} className="text-indigo-600 font-bold hover:underline">지금 작성하기 &rarr;</button>
+          <div className={`text-center py-24 rounded-3xl border-2 border-dashed transition-colors ${isDarkMode ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-stone-200'}`}>
+            <div className={`w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 ${isDarkMode ? 'bg-slate-800' : 'bg-stone-100'}`}><Map size={40} className="text-stone-400" /></div>
+            <h3 className="text-2xl font-black mb-2">아직 지도가 비어있네요</h3>
+            <p className="text-stone-500 mb-8 font-medium">당신만의 멋진 지도를 첫 번째로 그려보세요!</p>
+            <button onClick={() => user ? setView('create') : setShowAuthModal(true)} className="text-indigo-600 font-black hover:underline text-lg">지금 바로 기록하기 &rarr;</button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
             {trips.map((trip) => (
               <div 
                 key={trip.id} 
                 onClick={() => { setSelectedTrip(trip); setView('VIEW'); }}
-                className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer overflow-hidden border border-gray-100 group relative flex flex-col h-full transform hover:-translate-y-1"
+                className={`group relative flex flex-col h-full rounded-[2.5rem] overflow-hidden transition-all duration-500 transform hover:-translate-y-2 border shadow-sm hover:shadow-2xl ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-stone-100'}`}
               >
                 {user && user.uid === trip.userId && (
-                    <div className="absolute top-3 right-3 z-10 flex space-x-1.5 opacity-0 group-hover:opacity-100 transition-opacity translate-y-2 group-hover:translate-y-0 duration-300">
-                        {trip.visibility === 'PRIVATE' && (
-                            <div className="p-2 bg-black/50 text-white rounded-full shadow-lg backdrop-blur" title="나만 보기">
-                                <Lock size={16} />
-                            </div>
-                        )}
-                        <button onClick={(e) => handleEditTrip(e, trip)} className="p-2 bg-white/90 hover:bg-white text-indigo-600 rounded-full shadow-lg backdrop-blur hover:text-indigo-700" title="수정"><Pencil size={16} /></button>
-                        <button onClick={(e) => trip.id && handleDeleteTrip(e, trip.id)} className="p-2 bg-white/90 hover:bg-white text-red-500 rounded-full shadow-lg backdrop-blur hover:text-red-600" title="삭제"><Trash2 size={16} /></button>
+                    <div className="absolute top-5 right-5 z-20 flex space-x-2 opacity-0 group-hover:opacity-100 transition-all transform translate-y-2 group-hover:translate-y-0">
+                        {trip.visibility === 'PRIVATE' && <div className="p-2.5 bg-black/60 text-white rounded-full backdrop-blur-md border border-white/20"><Lock size={16} /></div>}
+                        <button onClick={(e) => { e.stopPropagation(); setSelectedTrip(trip); setView('EDIT'); }} className="p-2.5 bg-white text-indigo-600 rounded-full shadow-xl hover:scale-110 transition"><Pencil size={16} /></button>
+                        <button onClick={async (e) => { 
+                            e.stopPropagation(); 
+                            if(window.confirm('삭제하시겠습니까?')) {
+                                await deleteDoc(doc(db, "trips", trip.id!));
+                                setTrips(prev => prev.filter(t => t.id !== trip.id));
+                            }
+                        }} className="p-2.5 bg-white text-red-500 rounded-full shadow-xl hover:scale-110 transition"><Trash2 size={16} /></button>
                     </div>
                 )}
 
-                <div className="h-52 overflow-hidden relative bg-gray-200">
-                   {/* Priority: Thumbnail -> First Point Photo -> Default */}
+                <div className="h-64 overflow-hidden relative">
                    <img 
-                    src={trip.thumbnailUrl || trip.points[0]?.photoUrl || 'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'} 
+                    src={trip.thumbnailUrl || trip.points[0]?.photoUrl || 'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?auto=format&fit=crop&w=800&q=80'} 
                     alt={trip.title} 
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                    onError={(e) => {
-                        (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80';
-                    }}
+                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                    />
-                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-80" />
-                   <div className="absolute bottom-0 left-0 p-5 text-white w-full">
-                      <h3 className="text-xl font-bold leading-tight mb-1 shadow-black drop-shadow-md">{trip.title}</h3>
-                      <div className="flex items-center text-xs opacity-90 font-medium">
-                         <span className="bg-white/20 px-2 py-0.5 rounded backdrop-blur-sm mr-2">{new Date(trip.createdAt).toLocaleDateString()}</span>
-                         {activeTab === 'ALL' && <span className="text-white/70">by {trip.userId.slice(0,5)}...</span>}
+                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                   <div className="absolute bottom-0 left-0 p-8 w-full">
+                      <div className="flex items-center text-[10px] font-black tracking-widest uppercase text-indigo-400 mb-2">
+                         <span className="bg-indigo-950/50 px-2 py-1 rounded backdrop-blur-sm border border-indigo-500/30">{new Date(trip.createdAt).toLocaleDateString()}</span>
                       </div>
+                      <h3 className="text-2xl font-black text-white leading-tight drop-shadow-lg group-hover:text-indigo-300 transition-colors">{trip.title}</h3>
                    </div>
                 </div>
                 
-                <div className="p-5 flex-1 flex flex-col">
-                  <div className="flex items-center text-xs font-bold text-indigo-600 mb-3 bg-indigo-50 w-fit px-2 py-1 rounded"><MapPin size={12} className="mr-1" />{trip.points.length}개의 체크포인트</div>
-                  <p className="text-gray-600 text-sm leading-relaxed line-clamp-3 mb-4 flex-1">{trip.points[0]?.description || '작성된 설명이 없습니다.'}</p>
-                  <div className="mt-auto pt-4 border-t border-gray-100 flex justify-between items-center">
-                    <div className="flex -space-x-2">
-                         {trip.points.slice(0,3).map((p, i) => (
-                             <div key={i} className="w-6 h-6 rounded-full border-2 border-white bg-gray-200 overflow-hidden">
+                <div className="p-8 flex-1 flex flex-col">
+                  <div className={`inline-flex items-center text-xs font-black uppercase tracking-wider mb-4 px-3 py-1.5 rounded-full ${isDarkMode ? 'bg-slate-800 text-indigo-400' : 'bg-stone-100 text-indigo-600'}`}>
+                    <MapPin size={14} className="mr-1.5" />
+                    {trip.points.length} Checkpoints
+                  </div>
+                  <p className={`text-sm font-medium leading-relaxed line-clamp-2 mb-6 ${isDarkMode ? 'text-slate-400' : 'text-stone-500'}`}>
+                    {trip.points[0]?.description || '기록된 이야기가 시작되는 곳입니다.'}
+                  </p>
+                  <div className={`mt-auto pt-6 border-t flex justify-between items-center ${isDarkMode ? 'border-slate-800' : 'border-stone-100'}`}>
+                    <div className="flex -space-x-3">
+                         {trip.points.slice(0,4).map((p, i) => (
+                             <div key={i} className="w-9 h-9 rounded-full border-[3px] border-white dark:border-slate-900 bg-gray-200 overflow-hidden shadow-sm">
                                  <img src={p.photoUrl} className="w-full h-full object-cover" alt="" />
                              </div>
                          ))}
-                         {trip.points.length > 3 && (
-                             <div className="w-6 h-6 rounded-full border-2 border-white bg-gray-100 flex items-center justify-center text-[8px] text-gray-500 font-bold">+{trip.points.length - 3}</div>
-                         )}
                     </div>
-                    <span className="text-indigo-600 text-sm font-bold group-hover:translate-x-1 transition-transform inline-flex items-center">떠나기 &rarr;</span>
+                    <span className="text-indigo-600 text-sm font-black group-hover:translate-x-2 transition-transform inline-flex items-center italic">Explore &rarr;</span>
                   </div>
                 </div>
               </div>
