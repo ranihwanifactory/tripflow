@@ -4,7 +4,7 @@ import { TripPoint, TransportType, TripData, BgmType } from '../types';
 import { db, auth, storage } from '../firebase';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X, MapPin, AlertCircle, Music, Youtube, FileAudio, ChevronDown, ChevronUp, Crosshair, Camera, Lock, Globe } from 'lucide-react';
+import { Plus, Trash2, Image as ImageIcon, Loader2, Save, ArrowLeft, Pencil, X, MapPin, AlertCircle, Music, Youtube, FileAudio, ChevronDown, ChevronUp, Crosshair, Camera, Lock, Globe, Link as LinkIcon } from 'lucide-react';
 
 interface TripEditorProps {
   onFinish: () => void;
@@ -118,7 +118,6 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
     setMarker(newMarker);
 
     // --- GEOLOCATION LOGIC START ---
-    // If it's a new trip (no initial data), try to get user's current location immediately
     if (!initialData && navigator.geolocation) {
         setIsLocating(true);
         navigator.geolocation.getCurrentPosition(
@@ -133,7 +132,6 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                 setCurrentLat(lat);
                 setCurrentLng(lng);
                 
-                // Optional: Try to get address for current location
                 const geocoder = new window.kakao.maps.services.Geocoder();
                 geocoder.coord2Address(lng, lat, (result: any, status: any) => {
                     if (status === window.kakao.maps.services.Status.OK) {
@@ -174,8 +172,6 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
       });
     });
 
-    updatePolyline(newMap, points);
-
     return () => {
         resizeObserver.disconnect();
     };
@@ -189,6 +185,9 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
   }, [points, map]);
 
   const updatePolyline = (targetMap: any, tripPoints: TripPoint[]) => {
+      const existingPolylines = (targetMap as any).__polylines || [];
+      existingPolylines.forEach((p: any) => p.setMap(null));
+      
       if (tripPoints.length < 2) return;
       const sorted = [...tripPoints].sort(robustSort);
       const linePath = sorted.map(p => new window.kakao.maps.LatLng(p.lat, p.lng));
@@ -201,6 +200,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
         strokeStyle: 'solid'
       });
       polyline.setMap(targetMap);
+      (targetMap as any).__polylines = [polyline];
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -217,7 +217,15 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
           const file = e.target.files[0];
           setThumbnailFile(file);
           setThumbnailPreview(URL.createObjectURL(file));
+          setThumbnailUrl(''); // Clear URL if file is chosen
       }
+  };
+
+  const handleThumbnailUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const url = e.target.value;
+      setThumbnailUrl(url);
+      setThumbnailPreview(url);
+      setThumbnailFile(null); // Clear file if URL is typed
   };
 
   const handleBgmFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -289,16 +297,11 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
             finalPhotoUrl = await getDownloadURL(snapshot.ref);
         } catch (uploadError: any) {
             console.error("Storage Error:", uploadError);
-            // Fallback
-            const keywords = ['travel', 'nature', 'road', 'city'];
-            const randomKeyword = keywords[Math.floor(Math.random() * keywords.length)];
-            finalPhotoUrl = `https://source.unsplash.com/800x600/?${randomKeyword}&sig=${Math.random()}`;
+            finalPhotoUrl = `https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80`;
             alert(`사진 업로드 권한 오류. 기본 이미지로 대체합니다.`);
         }
       } else if (!finalPhotoUrl) {
-        const keywords = ['travel', 'landscape'];
-        const randomKeyword = keywords[Math.floor(Math.random() * keywords.length)];
-        finalPhotoUrl = `https://source.unsplash.com/800x600/?${randomKeyword}&sig=${Math.random()}`;
+        finalPhotoUrl = `https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80`;
       }
 
       const pointData = {
@@ -362,7 +365,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
               finalThumbnailUrl = await getDownloadURL(snapshot.ref);
           } catch (thumbErr) {
               console.error("Thumbnail upload failed:", thumbErr);
-              alert("커버 이미지 업로드에 실패했습니다. (기본 이미지로 저장됨)");
+              alert("커버 이미지 업로드에 실패했습니다. 입력된 URL이 있다면 그것으로 대체합니다.");
           }
       }
 
@@ -431,7 +434,6 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                 </h2>
             </div>
             
-            {/* Title & Visibility */}
             <div className="flex gap-2">
                 <input 
                     type="text" 
@@ -459,29 +461,50 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                 </div>
             </div>
 
-            {/* Thumbnail Upload (Fixed Click Issue) */}
-            <div className="relative border rounded-lg overflow-hidden h-32 bg-gray-100 group">
-                {thumbnailPreview ? (
-                    <img src={thumbnailPreview} alt="Cover" className="w-full h-full object-cover" />
-                ) : (
-                    <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                        <Camera size={24} className="mb-2"/>
-                        <span className="text-xs">대표 커버 이미지 설정</span>
+            {/* Thumbnail Upload & URL Input */}
+            <div className="space-y-2">
+                <div className="relative border rounded-lg overflow-hidden h-32 bg-gray-100 group">
+                    {thumbnailPreview ? (
+                        <img src={thumbnailPreview} alt="Cover" className="w-full h-full object-cover" />
+                    ) : (
+                        <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                            <Camera size={24} className="mb-2"/>
+                            <span className="text-xs">대표 커버 이미지 설정</span>
+                        </div>
+                    )}
+                    
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
+                        <span className="text-white text-xs font-bold border border-white px-2 py-1 rounded">이미지 변경</span>
                     </div>
-                )}
-                
-                {/* Overlay for visual feedback (pointer-events-none essential) */}
-                <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
-                    <span className="text-white text-xs font-bold border border-white px-2 py-1 rounded">이미지 변경</span>
-                </div>
 
-                {/* File Input must be on top with z-index */}
-                <input 
-                    type="file" 
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-30" 
-                    accept="image/*" 
-                    onChange={handleThumbnailChange} 
-                />
+                    <input 
+                        type="file" 
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-30" 
+                        accept="image/*" 
+                        onChange={handleThumbnailChange} 
+                    />
+                </div>
+                <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                        <LinkIcon size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                        <input 
+                            type="text"
+                            placeholder="이미지 URL 직접 입력"
+                            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-xs focus:ring-1 focus:ring-indigo-500 outline-none transition"
+                            value={thumbnailUrl}
+                            onChange={handleThumbnailUrlChange}
+                        />
+                    </div>
+                    {thumbnailPreview && (
+                        <button 
+                            onClick={() => { setThumbnailFile(null); setThumbnailUrl(''); setThumbnailPreview(''); }}
+                            className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
+                            title="커버 이미지 초기화"
+                        >
+                            <Trash2 size={16} />
+                        </button>
+                    )}
+                </div>
             </div>
 
             {/* BGM Config */}
@@ -521,15 +544,13 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                         </div>
 
                         {bgmType === 'YOUTUBE' && (
-                            <div>
-                                <input 
-                                    type="text" 
-                                    className="w-full p-2 border rounded text-xs"
-                                    placeholder="유튜브 영상 주소 (또는 ID) 입력"
-                                    value={bgmUrl}
-                                    onChange={(e) => setBgmUrl(e.target.value)}
-                                />
-                            </div>
+                            <input 
+                                type="text" 
+                                className="w-full p-2 border rounded text-xs"
+                                placeholder="유튜브 영상 주소 (또는 ID) 입력"
+                                value={bgmUrl}
+                                onChange={(e) => setBgmUrl(e.target.value)}
+                            />
                         )}
 
                         {bgmType === 'FILE' && (
@@ -556,7 +577,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                 </h4>
              </div>
              
-             <div className="max-h-[200px] overflow-y-auto p-4 space-y-2 custom-scrollbar">
+             <div className="max-h-[200px] overflow-y-auto p-4 space-y-2 no-scrollbar">
                 {points.length === 0 && (
                     <div className="text-center py-6 border-2 border-dashed border-gray-300 rounded-lg bg-white">
                         <MapPin className="mx-auto text-gray-300 mb-2" />
@@ -632,7 +653,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                         />
                     </div>
                     <div>
-                        <label className="block text-xs font-medium text-blue-600 font-bold mb-1">방문 날짜 (필수: 시간순 정렬 기준)</label>
+                        <label className="block text-xs font-medium text-blue-600 font-bold mb-1">방문 날짜</label>
                         <input 
                             type="datetime-local" 
                             className="w-full p-2.5 border border-blue-200 rounded-lg text-sm outline-none bg-blue-50 focus:bg-white transition"
@@ -643,7 +664,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                     </div>
                     
                     <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1">다음 장소까지 이동 수단</label>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">이동 수단</label>
                         <select 
                             className="w-full p-2.5 border rounded-lg text-sm outline-none bg-white"
                             value={transport}
@@ -659,28 +680,28 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                     </div>
 
                     <div>
-                         <label className="block text-xs font-medium text-gray-500 mb-1">제목</label>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">제목</label>
                         <input 
                             type="text" 
                             className="w-full p-2.5 border rounded-lg text-sm outline-none"
-                            placeholder="지점의 제목 (예: 맛있는 점심)"
+                            placeholder="지점 제목"
                             value={title}
                             onChange={(e) => setTitle(e.target.value)}
                         />
                     </div>
 
                     <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1">이야기</label>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">설명</label>
                         <textarea 
                             className="w-full p-2.5 border rounded-lg text-sm outline-none min-h-[80px]"
-                            placeholder="이곳에서의 추억을 기록하세요..."
+                            placeholder="추억 기록..."
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
                         />
                     </div>
 
                     <div>
-                         <label className="block text-xs font-medium text-gray-500 mb-1">사진 (파일 또는 URL)</label>
+                         <label className="block text-xs font-medium text-gray-500 mb-1">사진</label>
                          <div className="space-y-2">
                              <div className="flex gap-2">
                                 <label className={`flex-1 flex flex-col items-center justify-center h-24 border-2 border-dashed rounded-lg cursor-pointer hover:bg-gray-50 transition relative overflow-hidden ${photoFile ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'}`}>
@@ -701,7 +722,6 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                                         <button 
                                             onClick={() => { setPhotoFile(null); setPreviewUrl(''); setPhotoUrl(''); }}
                                             className="absolute top-0 right-0 bg-red-500 text-white p-1 rounded-bl-lg hover:bg-red-600 transition"
-                                            title="사진 삭제"
                                         >
                                             <Trash2 size={12} />
                                         </button>
@@ -710,7 +730,7 @@ const TripEditor: React.FC<TripEditorProps> = ({ onFinish, initialData }) => {
                              </div>
                              <input 
                                 type="text" 
-                                className="w-full p-2 border rounded-lg text-xs"
+                                className="w-full p-2 border border-gray-300 rounded-lg text-xs"
                                 placeholder="이미지 URL 직접 입력"
                                 value={photoUrl}
                                 onChange={(e) => {
