@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { TripData, TransportType, Review, TripPoint } from '../types';
-import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send, Globe, Layers, Trash2, Pencil, Check, Share2, Link as LinkIcon, Music, Play, Pause, Volume2, VolumeX, Plus, Minus } from 'lucide-react';
+import { MapPin, ArrowDown, X, Clock, Navigation, Star, Send, Globe, Layers, Trash2, Pencil, Check, Share2, Link as LinkIcon, Music, Play, Pause, Volume2, VolumeX, Plus, Minus, Sun, Moon } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, addDoc, query, where, onSnapshot, deleteDoc, updateDoc, doc } from 'firebase/firestore';
 
@@ -88,6 +88,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   const [transportOverlay, setTransportOverlay] = useState<any>(null);
   const [traveledPolyline, setTraveledPolyline] = useState<any>(null);
   
+  const [isDarkMode, setIsDarkMode] = useState(true);
   const [mapType, setMapType] = useState<'ROADMAP' | 'HYBRID'>('HYBRID');
 
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -357,6 +358,16 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       }
   };
 
+  // Switch Map Type based on Dark/Light mode preference when changed, 
+  // but allow user override via toggleMapType later
+  useEffect(() => {
+      if (isDarkMode) {
+          setMapType('HYBRID');
+      } else {
+          setMapType('ROADMAP');
+      }
+  }, [isDarkMode]);
+
   useEffect(() => {
     if (!mapRef.current || sortedPoints.length === 0) return;
 
@@ -391,7 +402,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         const backgroundPolyline = new window.kakao.maps.Polyline({
           path: fullBackgroundPath,
           strokeWeight: 6,
-          strokeColor: '#FFFFFF',
+          strokeColor: isDarkMode ? '#FFFFFF' : '#4F46E5',
           strokeOpacity: 0.3,
           strokeStyle: 'solid'
         });
@@ -453,7 +464,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         resizeObserver.disconnect();
     };
 
-  }, [fullBackgroundPath, sortedPoints]);
+  }, [fullBackgroundPath, sortedPoints, isDarkMode]); // Re-render map elements if mode changes
 
   useEffect(() => {
      if (!map || !window.kakao) return;
@@ -477,8 +488,6 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       const currentSectionIndex = Math.floor(relativeScroll / sectionHeight);
       const sectionProgress = (relativeScroll % sectionHeight) / sectionHeight;
       
-      // CRITICAL FIX: Explicitly handle the "End of Trip" state.
-      // If we scroll past the last segment, force the map to the last point and stop animation looping.
       if (currentSectionIndex < pathSegments.length) {
           // --- TRAVELING MODE ---
           const segment = pathSegments[currentSectionIndex];
@@ -512,17 +521,15 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
       } else {
           // --- ARRIVED AT DESTINATION MODE ---
-          // Force position to the absolute last point
           const lastPoint = sortedPoints[sortedPoints.length - 1];
           const pos = new window.kakao.maps.LatLng(lastPoint.lat, lastPoint.lng);
           
           transportOverlay.setPosition(pos);
-          traveledPolyline.setPath(fullBackgroundPath); // Show full path
+          traveledPolyline.setPath(fullBackgroundPath); 
           
           const iconDiv = transportOverlay.getContent();
           if (iconDiv) {
               iconDiv.style.transform = `translate(-50%, -50%) rotate(0deg)`;
-              // Optional: change icon to something that signifies arrival if needed
           }
       }
 
@@ -537,25 +544,29 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
         let opacity = 0;
         let translateY = 0;
+        let translateX = 0;
         let scale = 1;
 
         if (localProgress < 0.10) {
             opacity = localProgress / 0.10;
             translateY = 30 * (1 - opacity); 
+            translateX = -20 * (1 - opacity);
             scale = 0.95 + (0.05 * opacity);
         } else if (localProgress < 0.85) {
             opacity = 1;
             translateY = 0;
+            translateX = 0;
             scale = 1;
         } else {
             const exitProgress = (localProgress - 0.85) / 0.15;
             opacity = 1 - exitProgress;
             translateY = -80 * exitProgress; 
+            translateX = -20 * exitProgress;
             scale = 1 - (0.05 * exitProgress);
         }
 
         card.style.opacity = opacity.toString();
-        card.style.transform = `translateY(${translateY}px) scale(${scale})`;
+        card.style.transform = `translateY(${translateY}px) translateX(${translateX}px) scale(${scale})`;
         card.style.visibility = opacity <= 0.01 ? 'hidden' : 'visible';
       });
     };
@@ -573,16 +584,28 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
   }, [map, transportOverlay, traveledPolyline, pathSegments, fullBackgroundPath, sortedPoints]);
 
 
+  const buttonClass = isDarkMode 
+    ? "bg-black/40 hover:bg-black/60 backdrop-blur-md text-white border-white/20" 
+    : "bg-white/80 hover:bg-white text-gray-700 shadow-sm border-gray-300";
+
   return (
-    <div className="fixed inset-0 z-50 bg-black font-sans">
+    <div className={`fixed inset-0 z-50 font-sans transition-colors duration-500 ${isDarkMode ? 'bg-black text-white' : 'bg-gray-50 text-gray-900'}`}>
       
       {/* Background Map Layer */}
-      <div className="fixed inset-0 z-0 bg-black">
+      <div className={`fixed inset-0 z-0 ${isDarkMode ? 'bg-black' : 'bg-gray-100'}`}>
         <div 
             ref={mapRef} 
-            className={`w-full h-full transition-all duration-700 ${mapType === 'HYBRID' ? 'opacity-70' : 'opacity-40 grayscale-[30%] contrast-125'}`} 
+            className={`w-full h-full transition-all duration-700 ${
+                isDarkMode 
+                ? (mapType === 'HYBRID' ? 'opacity-70' : 'opacity-40 grayscale-[30%] contrast-125') 
+                : 'opacity-100'
+            }`} 
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/80 pointer-events-none" />
+        <div className={`absolute inset-0 bg-gradient-to-b pointer-events-none transition-colors duration-500 ${
+            isDarkMode 
+            ? 'from-black/50 via-transparent to-black/80' 
+            : 'from-white/60 via-transparent to-gray-50/90'
+        }`} />
       </div>
 
       <div id="youtube-player" className="hidden" />
@@ -590,13 +613,29 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
       {/* Top Controls */}
       <div className="fixed top-6 right-6 z-50 flex gap-4 items-start">
           
+          {/* Theme Toggle Switch */}
+          <div 
+            onClick={() => setIsDarkMode(!isDarkMode)}
+            className={`w-14 h-8 flex items-center rounded-full p-1 cursor-pointer transition-colors duration-300 shadow-lg border ${
+                isDarkMode ? 'bg-gray-800 border-gray-600' : 'bg-indigo-100 border-indigo-200'
+            }`}
+          >
+            <div 
+                className={`bg-white w-6 h-6 rounded-full shadow-md transform duration-300 ease-in-out flex items-center justify-center ${
+                    isDarkMode ? 'translate-x-6' : 'translate-x-0'
+                }`}
+            >
+                {isDarkMode ? <Moon size={14} className="text-gray-800"/> : <Sun size={14} className="text-orange-500"/>}
+            </div>
+          </div>
+
           {trip.bgmType && trip.bgmType !== 'NONE' && (
-              <div className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-2 rounded-full border border-white/20 shadow-lg flex items-center space-x-2 pr-4 transition-all">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isPlaying ? 'bg-indigo-500 animate-pulse' : 'bg-gray-600'}`}>
+              <div className={`backdrop-blur-md p-2 rounded-full border shadow-lg flex items-center space-x-2 pr-4 transition-all ${buttonClass}`}>
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isPlaying ? 'bg-indigo-500 animate-pulse text-white' : 'bg-gray-500 text-white'}`}>
                       <Music size={14} className={isPlaying ? 'animate-spin-slow' : ''} />
                   </div>
                   <div className="flex flex-col">
-                      <span className="text-[10px] text-gray-300 uppercase tracking-wider font-bold">BGM</span>
+                      <span className={`text-[10px] uppercase tracking-wider font-bold ${isDarkMode ? 'text-gray-300' : 'text-gray-500'}`}>BGM</span>
                       <div className="flex items-center space-x-3">
                         <button onClick={togglePlay} className="hover:text-indigo-400 transition">
                             {isPlaying ? <Pause size={16} fill="currentColor"/> : <Play size={16} fill="currentColor"/>}
@@ -610,19 +649,19 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
           )}
 
           <div className="flex flex-col gap-2">
-            <button onClick={handleShareTrip} className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group">
+            <button onClick={handleShareTrip} className={`p-3 rounded-full transition-all border shadow-lg group ${buttonClass}`}>
                 <LinkIcon size={20} />
             </button>
-            <button onClick={toggleMapType} className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group">
+            <button onClick={toggleMapType} className={`p-3 rounded-full transition-all border shadow-lg group ${buttonClass}`}>
                 {mapType === 'ROADMAP' ? <Globe size={20} /> : <Layers size={20} />}
             </button>
-            <button onClick={handleZoomIn} className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group">
+            <button onClick={handleZoomIn} className={`p-3 rounded-full transition-all border shadow-lg group ${buttonClass}`}>
                 <Plus size={20} />
             </button>
-            <button onClick={handleZoomOut} className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group">
+            <button onClick={handleZoomOut} className={`p-3 rounded-full transition-all border shadow-lg group ${buttonClass}`}>
                 <Minus size={20} />
             </button>
-            <button onClick={onClose} className="bg-black/40 hover:bg-black/60 backdrop-blur-md text-white p-3 rounded-full transition-all border border-white/20 shadow-lg group">
+            <button onClick={onClose} className={`p-3 rounded-full transition-all border shadow-lg group ${buttonClass}`}>
                 <X size={20} className="group-hover:rotate-90 transition-transform" />
             </button>
           </div>
@@ -673,12 +712,18 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                 style={{ height: `${SCROLL_HEIGHT_MULTIPLIER * 100}vh` }}
                 className="w-full relative"
             >
-                <div className="absolute top-0 bottom-0 left-1/2 w-px bg-gradient-to-b from-white/0 via-white/10 to-white/0 transform -translate-x-1/2" />
+                {/* Visual Timeline Guide (shifted left) */}
+                <div className={`absolute top-0 bottom-0 left-8 md:left-32 w-px transform ${isDarkMode ? 'bg-gradient-to-b from-white/0 via-white/10 to-white/0' : 'bg-gradient-to-b from-indigo-500/0 via-indigo-500/20 to-indigo-500/0'}`} />
 
-                <div className="sticky top-0 h-screen w-full flex items-center justify-center p-4 overflow-hidden">
+                {/* Card Container - Shifted to LEFT */}
+                <div className="sticky top-0 h-screen w-full flex items-center justify-start p-4 md:pl-12 lg:pl-20 overflow-hidden">
                     <div 
                         ref={el => cardRefs.current[idx] = el}
-                        className="w-full max-w-md bg-black/85 backdrop-blur-xl rounded-2xl shadow-2xl overflow-hidden border border-white/10 transform will-change-transform opacity-0"
+                        className={`w-full max-w-sm md:max-w-md rounded-2xl overflow-hidden transform will-change-transform opacity-0 transition-colors duration-500 ${
+                            isDarkMode 
+                            ? 'bg-black/85 backdrop-blur-xl border border-white/10 shadow-2xl' 
+                            : 'bg-white/90 backdrop-blur-xl border border-gray-200 shadow-xl'
+                        }`}
                     >
                         <div className="relative h-48 md:h-56 overflow-hidden group">
                             <img 
@@ -701,29 +746,29 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                             </div>
                         </div>
 
-                        <div className="p-5 text-gray-200">
+                        <div className={`p-5 ${isDarkMode ? 'text-gray-200' : 'text-gray-700'}`}>
                             <div className="flex items-start mb-4">
-                                <div className="bg-indigo-500/20 p-1.5 rounded-full mr-3 text-indigo-400 shrink-0 border border-indigo-500/30">
+                                <div className={`p-1.5 rounded-full mr-3 shrink-0 border ${isDarkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30' : 'bg-indigo-50 text-indigo-600 border-indigo-100'}`}>
                                     <MapPin size={16} />
                                 </div>
-                                <div>
-                                    <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-0.5">Location</h3>
-                                    <p className="text-base font-bold text-white leading-none mb-0.5">{point.locationName}</p>
-                                    <p className="text-xs text-gray-400 truncate max-w-[200px]">{point.address}</p>
+                                <div className="min-w-0">
+                                    <h3 className={`text-[10px] font-bold uppercase tracking-wide mb-0.5 ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>Location</h3>
+                                    <p className={`text-base font-bold leading-none mb-0.5 truncate ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{point.locationName}</p>
+                                    <p className={`text-xs truncate ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>{point.address}</p>
                                 </div>
                             </div>
                             <div className="prose prose-invert max-w-none mb-4">
-                                <p className="text-gray-300 leading-relaxed text-sm md:text-base whitespace-pre-line line-clamp-4">
+                                <p className={`leading-relaxed text-sm md:text-base whitespace-pre-line line-clamp-4 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
                                     {point.description}
                                 </p>
                             </div>
                             {idx < sortedPoints.length - 1 && (
-                                <div className="border-t border-white/10 pt-3 flex items-center justify-between">
-                                    <div className="flex items-center text-gray-500 text-xs font-medium">
+                                <div className={`border-t pt-3 flex items-center justify-between ${isDarkMode ? 'border-white/10' : 'border-gray-100'}`}>
+                                    <div className={`flex items-center text-xs font-medium ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>
                                         <Navigation size={12} className="mr-1" />
                                         <span>Next Destination</span>
                                     </div>
-                                    <div className="flex items-center bg-indigo-900/30 text-indigo-300 px-2 py-1 rounded-full text-xs font-bold border border-indigo-500/30">
+                                    <div className={`flex items-center px-2 py-1 rounded-full text-xs font-bold border ${isDarkMode ? 'bg-indigo-900/30 text-indigo-300 border-indigo-500/30' : 'bg-indigo-50 text-indigo-600 border-indigo-100'}`}>
                                         <span className="mr-1">{getTransportIcon(point.transportToNext)}</span>
                                         <span>{getTransportLabel(point.transportToNext)}</span>
                                     </div>
@@ -737,7 +782,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
         </div>
 
         {/* Outro */}
-        <div className="min-h-screen flex flex-col justify-start items-center text-white p-4 pt-20 bg-gradient-to-t from-black via-black/90 to-transparent relative z-20 pb-20">
+        <div className={`min-h-screen flex flex-col justify-start items-center p-4 pt-20 relative z-20 pb-20 transition-colors duration-500 ${isDarkMode ? 'text-white bg-gradient-to-t from-black via-black/90 to-transparent' : 'text-gray-900 bg-gradient-to-t from-gray-50 via-gray-50/90 to-transparent'}`}>
             <h2 className="text-3xl font-bold mb-4 drop-shadow-lg">End of Journey</h2>
             
             <div className="flex space-x-3 mb-10">
@@ -745,35 +790,35 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                     onClick={() => {
                         if(scrollContainerRef.current) scrollContainerRef.current.scrollTo({top: 0, behavior: 'smooth'});
                     }}
-                    className="px-5 py-2 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white rounded-full text-sm font-semibold transition border border-white/30"
+                    className={`px-5 py-2 backdrop-blur-md rounded-full text-sm font-semibold transition border ${isDarkMode ? 'bg-white/10 hover:bg-white/20 text-white border-white/30' : 'bg-white hover:bg-gray-100 text-gray-700 border-gray-300 shadow-sm'}`}
                 >
                     다시 보기
                 </button>
                 <button 
                     onClick={onClose}
-                    className="px-6 py-2 bg-white text-black rounded-full text-sm font-bold hover:bg-gray-200 transition shadow-xl"
+                    className="px-6 py-2 bg-indigo-600 text-white rounded-full text-sm font-bold hover:bg-indigo-700 transition shadow-xl"
                 >
                     지도 닫기
                 </button>
             </div>
 
             {/* Review Section */}
-            <div className="w-full max-w-md bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10">
+            <div className={`w-full max-w-md backdrop-blur-xl rounded-2xl p-6 border transition-colors duration-500 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-white/80 border-gray-200 shadow-xl'}`}>
                 <h3 className="text-xl font-bold mb-4 flex items-center">
                     <Star className="text-yellow-400 mr-2" fill="currentColor" size={20} /> 
-                    여행자 리뷰 <span className="text-xs font-normal text-white/60 ml-2">({reviews.length})</span>
+                    여행자 리뷰 <span className={`text-xs font-normal ml-2 ${isDarkMode ? 'text-white/60' : 'text-gray-500'}`}>({reviews.length})</span>
                 </h3>
 
                 {auth.currentUser ? (
-                    <div className="mb-6 p-4 bg-white/5 rounded-xl border border-white/5">
+                    <div className={`mb-6 p-4 rounded-xl border transition-colors ${isDarkMode ? 'bg-white/5 border-white/5' : 'bg-gray-50 border-gray-100'}`}>
                         <div className="flex items-center justify-between mb-3">
-                            <span className="font-medium text-white/90 text-sm">별점 남기기</span>
+                            <span className={`font-medium text-sm ${isDarkMode ? 'text-white/90' : 'text-gray-700'}`}>별점 남기기</span>
                             <div className="flex space-x-1">
                                 {[1, 2, 3, 4, 5].map((star) => (
                                     <button key={star} onClick={() => setNewRating(star)} className="focus:outline-none transition-transform hover:scale-110">
                                         <Star 
                                             size={20} 
-                                            className={star <= newRating ? "text-yellow-400" : "text-gray-600"} 
+                                            className={star <= newRating ? "text-yellow-400" : "text-gray-300"} 
                                             fill={star <= newRating ? "currentColor" : "currentColor"}
                                         />
                                     </button>
@@ -786,7 +831,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                 value={newComment}
                                 onChange={(e) => setNewComment(e.target.value)}
                                 placeholder="감상평을 남겨주세요..."
-                                className="flex-1 bg-white/10 border-transparent focus:border-indigo-500 focus:bg-white/20 text-white placeholder-gray-400 rounded-lg px-3 py-2 text-sm transition outline-none"
+                                className={`flex-1 border-transparent text-sm transition outline-none rounded-lg px-3 py-2 ${isDarkMode ? 'bg-white/10 focus:bg-white/20 text-white placeholder-gray-400' : 'bg-white border border-gray-200 focus:border-indigo-500 text-gray-900 placeholder-gray-400'}`}
                                 onKeyDown={(e) => e.key === 'Enter' && handleSubmitReview()}
                             />
                             <button onClick={handleSubmitReview} disabled={isSubmittingReview} className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-2 font-bold disabled:opacity-50 transition">
@@ -795,9 +840,9 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                         </div>
                     </div>
                 ) : (
-                    <div className="mb-6 p-4 bg-indigo-900/30 rounded-xl border border-indigo-500/30 text-center">
-                        <p className="text-sm text-indigo-200 mb-2">여행에 대한 감상을 남기고 싶으신가요?</p>
-                        <button onClick={() => alert('상단 메뉴에서 로그인해주세요!')} className="text-xs font-bold bg-white text-indigo-600 px-3 py-1.5 rounded-full hover:bg-gray-100 transition">
+                    <div className="mb-6 p-4 bg-indigo-900/10 rounded-xl border border-indigo-500/20 text-center">
+                        <p className="text-sm text-indigo-500 mb-2">여행에 대한 감상을 남기고 싶으신가요?</p>
+                        <button onClick={() => alert('상단 메뉴에서 로그인해주세요!')} className="text-xs font-bold bg-indigo-600 text-white px-3 py-1.5 rounded-full hover:bg-indigo-700 transition">
                             로그인하고 리뷰 쓰기
                         </button>
                     </div>
@@ -805,22 +850,22 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
 
                 <div className="space-y-3 overflow-y-auto max-h-64 no-scrollbar pr-1">
                     {reviews.length === 0 ? (
-                        <p className="text-center text-white/50 py-4 text-xs">아직 작성된 리뷰가 없습니다.</p>
+                        <p className={`text-center py-4 text-xs ${isDarkMode ? 'text-white/50' : 'text-gray-400'}`}>아직 작성된 리뷰가 없습니다.</p>
                     ) : (
                         reviews.map((review) => (
-                            <div key={review.id} className="bg-black/40 p-3 rounded-lg border border-white/5 relative group">
+                            <div key={review.id} className={`p-3 rounded-lg border relative group transition-colors ${isDarkMode ? 'bg-black/40 border-white/5' : 'bg-white border-gray-100 shadow-sm'}`}>
                                 <div className="flex justify-between items-start mb-1">
                                     <div className="flex items-center">
                                         <div className="w-6 h-6 rounded-full bg-indigo-500 flex items-center justify-center text-xs font-bold mr-2 overflow-hidden border border-white/20">
                                             {review.userPhoto ? <img src={review.userPhoto} alt="user" className="w-full h-full object-cover"/> : review.userName[0]}
                                         </div>
                                         <div>
-                                            <div className="font-bold text-xs text-white">{review.userName}</div>
+                                            <div className={`font-bold text-xs ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>{review.userName}</div>
                                             {editingReviewId === review.id ? (
                                                 <div className="flex items-center space-x-1 mt-1">
                                                      {[1, 2, 3, 4, 5].map((star) => (
                                                         <button key={star} onClick={() => setEditReviewRating(star)} className="focus:outline-none">
-                                                            <Star size={10} className={star <= editReviewRating ? "text-yellow-400" : "text-gray-600"} fill={star <= editReviewRating ? "currentColor" : "currentColor"}/>
+                                                            <Star size={10} className={star <= editReviewRating ? "text-yellow-400" : "text-gray-300"} fill={star <= editReviewRating ? "currentColor" : "currentColor"}/>
                                                         </button>
                                                      ))}
                                                 </div>
@@ -831,7 +876,7 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                             )}
                                         </div>
                                     </div>
-                                    <span className="text-[10px] text-white/40">{new Date(review.createdAt).toLocaleDateString()}</span>
+                                    <span className={`text-[10px] ${isDarkMode ? 'text-white/40' : 'text-gray-400'}`}>{new Date(review.createdAt).toLocaleDateString()}</span>
                                 </div>
                                 {editingReviewId === review.id ? (
                                     <div className="mt-2">
@@ -839,21 +884,21 @@ const TripViewer: React.FC<TripViewerProps> = ({ trip, onClose }) => {
                                             type="text" 
                                             value={editReviewText}
                                             onChange={(e) => setEditReviewText(e.target.value)}
-                                            className="w-full bg-white/10 text-white text-xs p-2 rounded mb-2 border border-white/20 focus:outline-none"
+                                            className={`w-full text-xs p-2 rounded mb-2 border focus:outline-none ${isDarkMode ? 'bg-white/10 text-white border-white/20' : 'bg-gray-50 text-gray-800 border-gray-300'}`}
                                             autoFocus
                                         />
                                         <div className="flex justify-end gap-2">
-                                            <button onClick={cancelEditing} className="p-1 text-gray-400 hover:text-white rounded bg-white/10"><X size={12} /></button>
+                                            <button onClick={cancelEditing} className={`p-1 rounded ${isDarkMode ? 'text-gray-400 hover:text-white bg-white/10' : 'text-gray-500 hover:text-gray-700 bg-gray-100'}`}><X size={12} /></button>
                                             <button onClick={() => handleUpdateReview(review.id)} className="p-1 text-green-400 hover:text-green-300 rounded bg-green-500/20 border border-green-500/30"><Check size={12} /></button>
                                         </div>
                                     </div>
                                 ) : (
-                                    <p className="text-white/80 text-xs ml-8 leading-snug">{review.text}</p>
+                                    <p className={`text-xs ml-8 leading-snug ${isDarkMode ? 'text-white/80' : 'text-gray-600'}`}>{review.text}</p>
                                 )}
                                 {auth.currentUser?.uid === review.userId && editingReviewId !== review.id && (
                                     <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button onClick={() => startEditing(review)} className="p-1 text-gray-400 hover:text-indigo-400 bg-black/50 rounded" title="수정"><Pencil size={10} /></button>
-                                        <button onClick={() => handleDeleteReview(review.id)} className="p-1 text-gray-400 hover:text-red-400 bg-black/50 rounded" title="삭제"><Trash2 size={10} /></button>
+                                        <button onClick={() => startEditing(review)} className={`p-1 rounded ${isDarkMode ? 'text-gray-400 hover:text-indigo-400 bg-black/50' : 'text-gray-400 hover:text-indigo-600 bg-gray-100'}`} title="수정"><Pencil size={10} /></button>
+                                        <button onClick={() => handleDeleteReview(review.id)} className={`p-1 rounded ${isDarkMode ? 'text-gray-400 hover:text-red-400 bg-black/50' : 'text-gray-400 hover:text-red-600 bg-gray-100'}`} title="삭제"><Trash2 size={10} /></button>
                                     </div>
                                 )}
                             </div>
